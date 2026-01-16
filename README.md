@@ -5,23 +5,41 @@ Multi-agent coding orchestration system using CLI tools (Claude, Codex, Gemini).
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      ORCHESTRA                               │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│   ┌─────────┐     ┌─────────┐     ┌─────────┐              │
-│   │ PLANNER │────▶│ WORKERS │────▶│  JUDGE  │              │
-│   └─────────┘     └─────────┘     └─────────┘              │
-│        │               │               │                    │
-│        │          ┌────┴────┐          │                    │
-│        │          │         │          │                    │
-│        ▼          ▼         ▼          ▼                    │
-│   ┌─────────┐ ┌───────┐ ┌───────┐ ┌─────────┐             │
-│   │  Tasks  │ │Claude │ │ Codex │ │ Gemini  │             │
-│   │  Queue  │ │  CLI  │ │  CLI  │ │   CLI   │             │
-│   └─────────┘ └───────┘ └───────┘ └─────────┘             │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         ORCHESTRA                                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌─────────┐                                                   │
+│   │ PLANNER │──────┬──────────────────────┐                     │
+│   └─────────┘      │                      │                     │
+│        │           ▼                      ▼                     │
+│        │    ┌─────────────┐        ┌─────────────┐             │
+│        │    │ Sub-Planner │        │ Sub-Planner │  (parallel) │
+│        │    │    (API)    │        │    (UI)     │             │
+│        │    └─────────────┘        └─────────────┘             │
+│        │           │                      │                     │
+│        ▼           ▼                      ▼                     │
+│   ┌─────────────────────────────────────────┐                   │
+│   │              Task Queue                  │                   │
+│   └─────────────────────────────────────────┘                   │
+│                       │                                          │
+│              ┌────────┼────────┐                                │
+│              ▼        ▼        ▼                                │
+│         ┌────────┐┌────────┐┌────────┐                          │
+│         │Worker-1││Worker-2││Worker-3│  (parallel)              │
+│         └────────┘└────────┘└────────┘                          │
+│              │        │        │                                │
+│              ▼        ▼        ▼                                │
+│         ┌───────┐ ┌───────┐ ┌───────┐                          │
+│         │Claude │ │ Codex │ │Gemini │  (failover)              │
+│         └───────┘ └───────┘ └───────┘                          │
+│                       │                                          │
+│                       ▼                                          │
+│                 ┌─────────┐                                      │
+│                 │  JUDGE  │                                      │
+│                 └─────────┘                                      │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Prerequisites
@@ -160,18 +178,63 @@ orchestra run "Implement OAuth2 with refresh tokens" --max
 - Analyzes the goal and codebase
 - Creates well-defined tasks for workers
 - Assigns relevant files to each task
+- Sets `needs_web_search` flag for tasks requiring current information
+- **Spawns sub-planners** for large projects (parallel recursive planning)
 - Does NOT write code itself
 
-### 2. Worker Phase
+### 2. Sub-Planners (Optional)
+For large projects, the main planner can spawn sub-planners:
+- Each sub-planner focuses on a specific area (API, UI, Database, etc.)
+- Sub-planners run **in parallel** for faster planning
+- Each creates up to 5 focused tasks for their area
+- Triggered when project has 5+ modules or 15+ estimated tasks
+
+```
+Main Planner → 10 tasks + spawn_sub_planners: ["API", "UI"]
+                    │
+       ┌────────────┴────────────┐
+       ▼                         ▼
+Sub-Planner:API            Sub-Planner:UI
+    5 tasks                    5 tasks
+       │                         │
+       └────────────┬────────────┘
+                    ▼
+            Total: 20 tasks
+```
+
+### 3. Worker Phase
 - Workers claim tasks from queue (index-based, no locks)
 - Execute tasks using available CLI tools (Claude/Codex/Gemini)
 - Run in parallel (up to `maxWorkers`)
 - Each worker commits only its task's files
+- **Web search enabled** for tasks flagged with `needs_web_search`
 
-### 3. Judge Phase
+### 4. Judge Phase
 - Evaluates cycle progress
 - Decides: `CONTINUE`, `COMPLETE`, or `ABORT`
 - Provides recommendations for next cycle
+
+## Web Search Integration
+
+Planner decides when tasks need current/recent information:
+
+| Agent | Web Search Method |
+|-------|-------------------|
+| Claude | WebSearch tool (built-in) |
+| Codex | `--search` flag |
+| Gemini | `--grounding` (Google Search) |
+
+**When web search is enabled:**
+- Latest library versions or API changes (2025-2026)
+- Current best practices
+- New framework features or syntax
+- Recent security advisories
+- Up-to-date documentation
+
+**When NOT enabled:**
+- Standard coding tasks
+- Tasks using established patterns
+- Internal codebase work
 
 ## Git Workflow
 
@@ -222,7 +285,7 @@ orchestra/                  # Orchestra source code
 │   │   └── prompts.ts     # Prompt templates
 │   ├── core/
 │   │   ├── orchestrator.ts # Main orchestration loop
-│   │   ├── planner.ts     # Planner runner
+│   │   ├── planner.ts     # Planner & sub-planner runner
 │   │   ├── judge.ts       # Judge runner
 │   │   ├── tasks.ts       # Task management
 │   │   ├── state.ts       # State management
@@ -307,7 +370,10 @@ Orchestra uses aggressive anti-laziness prompts to ensure agents complete tasks 
 - "Do NOT say 'the user can finish this'"
 - "You GRIND until the task is DONE"
 
-Based on learnings from [Cursor's scaling-agents research](https://cursor.com/blog/scaling-agents).
+Based on learnings from [Cursor's scaling-agents research](https://cursor.com/blog/scaling-agents):
+- **Sub-planners**: Parallel recursive planning for large codebases
+- **Anti-laziness prompts**: Aggressive task completion requirements
+- **Planner wake-up**: Re-plan every N completed tasks
 
 ## License
 

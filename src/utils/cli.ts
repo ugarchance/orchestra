@@ -82,6 +82,7 @@ export interface CliOptions {
  */
 export interface ClaudeCliOptions extends CliOptions {
   model?: string;
+  webSearch?: boolean;  // Enable web search tool
 }
 
 /**
@@ -90,6 +91,7 @@ export interface ClaudeCliOptions extends CliOptions {
 export interface CodexCliOptions extends CliOptions {
   model?: string;
   reasoningLevel?: string;
+  webSearch?: boolean;  // Enable web search (--search flag)
 }
 
 /**
@@ -97,6 +99,7 @@ export interface CodexCliOptions extends CliOptions {
  */
 export interface GeminiCliOptions extends CliOptions {
   model?: string;
+  webSearch?: boolean;  // Enable Google Search grounding
 }
 
 /**
@@ -210,6 +213,12 @@ export async function runCodex(
   // Add reasoning level if specified
   if (options.reasoningLevel) {
     args.push("-c", `model_reasoning_effort="${options.reasoningLevel}"`);
+  }
+
+  // Enable web search if requested
+  if (options.webSearch) {
+    args.push("--search");
+    logger.debug(`[CLI] Codex web search enabled`);
   }
 
   // Add stdin marker last
@@ -338,6 +347,12 @@ export async function runGemini(
 
   // YOLO mode for auto-approval (-y is short for --yolo)
   args.push("-y");
+
+  // Enable Google Search grounding if requested
+  if (options.webSearch) {
+    args.push("--grounding");
+    logger.debug(`[CLI] Gemini Google Search grounding enabled`);
+  }
 
   // JSON output for parsing
   args.push("-o", "stream-json");

@@ -69,12 +69,16 @@ export class GeminiExecutor extends BaseAgentExecutor {
     const prompt = this.buildPrompt(task, context);
 
     logger.info(`[${this.agentType}] Executing task: ${task.title} with model: ${this.model}`);
+    if (task.needs_web_search) {
+      logger.info(`[${this.agentType}] Google Search grounding enabled for this task`);
+    }
 
     try {
       const result = await runGemini(prompt, {
         cwd: this.workingDir,
         timeout: this.timeout,
         model: this.model,
+        webSearch: task.needs_web_search,
       });
 
       const durationMs = Date.now() - startTime;

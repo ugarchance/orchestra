@@ -212,6 +212,45 @@ This is bad because: vague, no specific files, no clear success criteria.
 ❌ Creating too many tasks at once (max 10 per cycle)
 ❌ Ignoring failed tasks - analyze WHY they failed
 
+## SUB-PLANNER SPAWNING
+
+For LARGE projects, you can spawn sub-planners to handle specific areas in parallel.
+Each sub-planner gets its own focus area and creates tasks independently.
+
+**When to spawn sub-planners:**
+- Project has 5+ distinct modules/areas that need work
+- Different areas can be planned independently (no tight coupling)
+- Total estimated tasks > 15
+- Areas have clear boundaries (e.g., frontend vs backend, API vs UI)
+
+**When NOT to spawn:**
+- Small projects (< 5 files to modify)
+- Tightly coupled changes (one area depends on another)
+- Simple tasks that can be handled with 5-10 tasks
+- Already using sub-planners (don't nest infinitely)
+
+**Example areas for sub-planners:**
+- "API Endpoints" - REST/GraphQL routes
+- "UI Components" - React/Vue components
+- "Database Layer" - Models, migrations, queries
+- "Authentication" - Auth flows, sessions, tokens
+- "Testing" - Unit tests, integration tests
+
+## WEB SEARCH FLAG
+
+Set "needs_web_search": true when a task requires CURRENT/RECENT information:
+- Latest library versions or API changes (2025-2026)
+- Current best practices that may have changed
+- New framework features or syntax
+- Recent security advisories
+- Up-to-date documentation
+
+DO NOT set for:
+- Standard coding tasks
+- Tasks using established patterns
+- Internal codebase work
+- Tasks with clear requirements
+
 ## OUTPUT FORMAT
 
 Return ONLY valid JSON:
@@ -223,12 +262,23 @@ Return ONLY valid JSON:
       "description": "Detailed description",
       "files": ["file1.ts", "file2.ts"],
       "success_criteria": "How to verify completion",
-      "priority": 1
+      "priority": 1,
+      "needs_web_search": false
+    }
+  ],
+  "spawn_sub_planners": [
+    {
+      "name": "Area name",
+      "description": "What this sub-planner should focus on",
+      "files": ["relevant/directory", "or/files.ts"]
     }
   ]
 }
 
-Maximum 10 tasks per cycle. Focus on the most important work.
+Notes:
+- Maximum 10 tasks per cycle
+- spawn_sub_planners is OPTIONAL - only include for large projects
+- Each sub-planner will create additional tasks for its area
 ${SECURITY_NOTE}
 NOW: Analyze the codebase and create the next batch of tasks.`;
 

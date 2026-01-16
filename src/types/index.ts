@@ -118,6 +118,9 @@ export interface Task {
   // Files
   files: string[];
 
+  // Web search flag - Planner decides if task needs internet research
+  needs_web_search: boolean;
+
   // Metadata
   created_by: string;
   created_at: string;
@@ -306,11 +309,23 @@ export interface PlannerTaskOutput {
   files: string[];
   success_criteria: string;
   priority: number;
+  needs_web_search?: boolean;  // Set true if task requires current/recent information from internet
+}
+
+/**
+ * Sub-planner focus area
+ * Planner can spawn sub-planners for specific areas when project is large
+ */
+export interface SubPlannerArea {
+  name: string;           // Area name (e.g., "API endpoints", "UI components")
+  description: string;    // What this sub-planner should focus on
+  files: string[];        // Relevant files/directories for context
 }
 
 export interface PlannerOutput {
   analysis: string;
   tasks: PlannerTaskOutput[];
+  spawn_sub_planners?: SubPlannerArea[];  // Areas that need dedicated sub-planners
 }
 
 // =============================================================================

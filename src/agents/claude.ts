@@ -3,9 +3,11 @@ import {
   BaseAgentExecutor,
   type AgentExecutorConfig,
   type ExecutionContext,
+  type ExecutionResult,
   type ParsedOutput,
 } from "./base.js";
 import { buildWorkerPrompt } from "./prompts.js";
+import { detectError } from "../core/errors.js";
 import { runClaude } from "../utils/cli.js";
 import logger from "../utils/logger.js";
 
@@ -117,7 +119,97 @@ export class ClaudeExecutor extends BaseAgentExecutor {
   }
 
   /**
-   * Override runCli to use the new stdin approach
+   * Override execute to handle web search flag
+   */
+  override async execute(task: Task, context: ExecutionContext): Promise<ExecutionResult> {
+    const startTime = Date.now();
+    const prompt = this.buildPrompt(task, context);
+
+    logger.info(`[Claude] Executing task: ${task.title} with model: ${this.model}`);
+    if (task.needs_web_search) {
+      logger.info(`[Claude] Web search enabled for this task`);
+    }
+
+    try {
+      const result = await runClaude(prompt, {
+        cwd: this.workingDir,
+        timeout: this.timeout,
+        model: this.model,
+        webSearch: task.needs_web_search,
+      });
+
+      const durationMs = Date.now() - startTime;
+      const output = this.extractClaudeResult(result.stdout + result.stderr);
+
+      if (result.exitCode !== 0) {
+        const errorCategory = detectError(output, result.exitCode);
+        logger.error(`[Claude] Task failed: ${errorCategory}`);
+
+        return {
+          success: false,
+          output,
+          error: {
+            category: errorCategory,
+            message: this.extractErrorMessage(output),
+          },
+          exitCode: result.exitCode,
+          durationMs,
+        };
+      }
+
+      // Parse output
+      const parsed = this.parseOutput(output);
+
+      if (parsed.status === "COMPLETED") {
+        logger.success(`[Claude] Task completed: ${task.title}`);
+        return {
+          success: true,
+          output,
+          exitCode: 0,
+          durationMs,
+        };
+      } else if (parsed.status === "FAILED") {
+        logger.error(`[Claude] Task reported failure: ${parsed.error}`);
+        return {
+          success: false,
+          output,
+          error: {
+            category: "unknown",
+            message: parsed.error || "Task reported failure",
+          },
+          exitCode: 0,
+          durationMs,
+        };
+      }
+
+      // No clear status - treat as success if exit code was 0
+      return {
+        success: true,
+        output,
+        exitCode: 0,
+        durationMs,
+      };
+    } catch (err) {
+      const durationMs = Date.now() - startTime;
+      const message = err instanceof Error ? err.message : String(err);
+
+      logger.error(`[Claude] Execution error: ${message}`);
+
+      return {
+        success: false,
+        output: "",
+        error: {
+          category: detectError(message, 1),
+          message,
+        },
+        exitCode: 1,
+        durationMs,
+      };
+    }
+  }
+
+  /**
+   * Override runCli for base class compatibility
    */
   protected override async runCli(
     args: string[]
@@ -125,18 +217,11 @@ export class ClaudeExecutor extends BaseAgentExecutor {
     // args[0] is the prompt (from buildArgs)
     const prompt = args[0];
 
-    logger.info(`[Claude] Executing via stdin approach with model: ${this.model}`);
-    logger.debug(`[Claude] Working dir: ${this.workingDir}`);
-    logger.debug(`[Claude] Prompt preview: ${prompt.slice(0, 200)}...`);
-
     const result = await runClaude(prompt, {
       cwd: this.workingDir,
       timeout: this.timeout,
       model: this.model,
     });
-
-    logger.debug(`[Claude] Exit code: ${result.exitCode}`);
-    logger.debug(`[Claude] Command: ${result.command}`);
 
     // Extract actual result from Claude's JSON wrapper
     const output = this.extractClaudeResult(result.stdout + result.stderr);

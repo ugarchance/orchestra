@@ -24,6 +24,7 @@ import {
   recordTaskError,
   releaseTask,
   releaseStuckTasks,
+  loadTasks,
 } from "./tasks.js";
 import { createInitialAgentPool, saveAgentPool } from "./agents.js";
 import { eventBus, createWakeupController, type PlannerWakeupController } from "./events.js";
@@ -213,17 +214,19 @@ export class Orchestra {
     // Commit final changes
     await this.commitChanges(`Orchestra: ${finalStatus} - ${goal.slice(0, 50)}`);
 
-    // Get final stats
-    const finalState = await loadState(this.projectPath);
+    // Get final stats from actual tasks (not state.json which may be out of sync)
+    const allTasks = await loadTasks(this.projectPath);
+    const completedTasks = allTasks.filter(t => t.status === "completed").length;
+    const failedTasks = allTasks.filter(t => t.status === "failed").length;
     const durationMs = Date.now() - startTime;
 
     return {
       success: finalStatus === "completed",
       finalStatus,
       totalCycles: state.current_cycle,
-      totalTasks: finalState?.stats.tasks_created ?? 0,
-      completedTasks: finalState?.stats.tasks_completed ?? 0,
-      failedTasks: finalState?.stats.tasks_failed ?? 0,
+      totalTasks: allTasks.length,
+      completedTasks,
+      failedTasks,
       durationMs,
       message: this.getResultMessage(finalStatus, lastDecision),
     };

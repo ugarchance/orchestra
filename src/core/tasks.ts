@@ -25,7 +25,8 @@ export function createTask(
   description: string,
   createdBy: string,
   files: string[] = [],
-  maxAttempts: number = 3
+  maxAttempts: number = 3,
+  needsWebSearch: boolean = false
 ): Task {
   const now = new Date().toISOString();
 
@@ -37,6 +38,7 @@ export function createTask(
     assigned_agent: null,
     worker_id: null,
     files,
+    needs_web_search: needsWebSearch,
     created_by: createdBy,
     created_at: now,
     started_at: null,

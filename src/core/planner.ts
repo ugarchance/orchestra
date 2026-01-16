@@ -1,19 +1,10 @@
-import type { Task, PlannerOutput, PlannerTaskOutput, ModelConfig } from "../types/index.js";
+import type { Task, PlannerOutput, PlannerTaskOutput, ModelConfig, SubPlannerArea } from "../types/index.js";
 import type { ExecutionContext } from "../agents/base.js";
 import { buildPlannerPrompt, buildSubPlannerPrompt } from "../agents/prompts.js";
 import { AgentExecutorManager } from "../agents/executor.js";
 import { createTask, loadTasks, addTask } from "./tasks.js";
 import { loadState, updateStats } from "./state.js";
 import logger from "../utils/logger.js";
-
-/**
- * Sub-planner focus areas that can be spawned
- */
-export interface SubPlannerArea {
-  name: string;
-  description: string;
-  files: string[];
-}
 
 /**
  * Planner Runner
@@ -85,14 +76,35 @@ export class PlannerRunner {
           taskOutput.title,
           taskOutput.description,
           "planner",
-          taskOutput.files
+          taskOutput.files,
+          3, // maxAttempts
+          taskOutput.needs_web_search ?? false
         );
 
         // Add to storage
         await addTask(this.projectPath, task);
         newTasks.push(task);
 
-        logger.debug(`[Planner] Created task: ${task.title}`);
+        logger.debug(`[Planner] Created task: ${task.title}${task.needs_web_search ? ' (web search)' : ''}`);
+      }
+
+      // Check if planner requested sub-planners
+      if (plannerOutput.spawn_sub_planners && plannerOutput.spawn_sub_planners.length > 0) {
+        logger.info(`[Planner] Spawning ${plannerOutput.spawn_sub_planners.length} sub-planners`);
+
+        // Spawn sub-planners in parallel
+        const subPlannerPromises = plannerOutput.spawn_sub_planners.map(area =>
+          this.spawnSubPlanner(area, context, plannerOutput.analysis)
+        );
+
+        const subPlannerResults = await Promise.all(subPlannerPromises);
+
+        // Aggregate sub-planner tasks
+        for (const tasks of subPlannerResults) {
+          newTasks.push(...tasks);
+        }
+
+        logger.info(`[Planner] Sub-planners created ${newTasks.length - plannerOutput.tasks.length} additional tasks`);
       }
 
       // Update stats
@@ -115,6 +127,7 @@ export class PlannerRunner {
 
   /**
    * Parse planner output JSON
+   * Extracts tasks and optional spawn_sub_planners
    */
   private parsePlannerOutput(output: string): PlannerOutput | null {
     try {
@@ -137,9 +150,17 @@ export class PlannerRunner {
               .filter((t: PlannerTaskOutput) => t.title && t.description)
               .slice(0, 10); // Max 10 tasks per cycle
 
+            // Extract spawn_sub_planners if present
+            const subPlanners: SubPlannerArea[] | undefined = parsed.spawn_sub_planners
+              ? parsed.spawn_sub_planners
+                  .filter((s: SubPlannerArea) => s.name && s.description)
+                  .slice(0, 5) // Max 5 sub-planners
+              : undefined;
+
             return {
               analysis: parsed.analysis,
               tasks: validTasks,
+              spawn_sub_planners: subPlanners,
             };
           }
         }
@@ -148,7 +169,11 @@ export class PlannerRunner {
       // Try to parse entire output as JSON
       const directParse = JSON.parse(output);
       if (directParse.analysis && Array.isArray(directParse.tasks)) {
-        return directParse;
+        return {
+          analysis: directParse.analysis,
+          tasks: directParse.tasks.slice(0, 10),
+          spawn_sub_planners: directParse.spawn_sub_planners?.slice(0, 5),
+        };
       }
 
       return null;
@@ -201,12 +226,14 @@ export class PlannerRunner {
           taskOutput.title,
           taskOutput.description,
           `sub-planner:${focusArea.name}`,
-          taskOutput.files
+          taskOutput.files,
+          3, // maxAttempts
+          taskOutput.needs_web_search ?? false
         );
 
         await addTask(this.projectPath, task);
         newTasks.push(task);
-        logger.debug(`[Sub-Planner:${focusArea.name}] Created task: ${task.title}`);
+        logger.debug(`[Sub-Planner:${focusArea.name}] Created task: ${task.title}${task.needs_web_search ? ' (web search)' : ''}`);
       }
 
       logger.info(`[Sub-Planner] ${focusArea.name} created ${newTasks.length} tasks`);
