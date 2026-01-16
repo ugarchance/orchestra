@@ -1,4 +1,4 @@
-import type { Task, JudgeOutput, JudgeDecision } from "../types/index.js";
+import type { JudgeOutput, JudgeDecision } from "../types/index.js";
 import type { ExecutionContext } from "../agents/base.js";
 import { buildJudgePrompt } from "../agents/prompts.js";
 import { AgentExecutorManager } from "../agents/executor.js";
@@ -54,28 +54,12 @@ export class JudgeRunner {
       failed: failedTasks,
     });
 
-    // Create a pseudo-task for the judge
-    const judgeTask: Task = {
-      id: `judge-${cycle.current}`,
-      title: "Evaluate cycle progress",
-      description: prompt,
-      status: "in_progress",
-      assigned_agent: null,
-      worker_id: null,
-      files: [],
-      created_by: "system",
-      created_at: new Date().toISOString(),
-      started_at: new Date().toISOString(),
-      completed_at: null,
-      attempts: 0,
-      max_attempts: 3,
-      last_error: null,
-      agent_history: [],
-    };
-
     try {
-      // Execute with any available agent
-      const { result } = await this.executorManager.executeTask(judgeTask, context);
+      // Execute raw prompt (no Worker wrapper for Judge)
+      const { result } = await this.executorManager.executeRawPrompt(
+        prompt,
+        `Judge cycle ${cycle.current}`
+      );
 
       if (!result.success) {
         logger.error(`[Judge] Failed to evaluate: ${result.error?.message}`);

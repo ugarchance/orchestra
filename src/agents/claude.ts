@@ -6,52 +6,48 @@ import {
   type ParsedOutput,
 } from "./base.js";
 import { buildWorkerPrompt } from "./prompts.js";
+import { runClaude } from "../utils/cli.js";
+import logger from "../utils/logger.js";
 
 /**
  * Claude CLI executor
  *
- * Command: claude -p "prompt" --dangerously-skip-permissions --output-format json
- *
- * Flags:
- * - `-p`: Print mode (non-interactive)
- * - `--dangerously-skip-permissions`: Skip permission prompts for full automation
- * - `--output-format json`: Get structured JSON output
- *
- * Note: Claude is often installed as an alias, so we try multiple paths
+ * Uses stdin approach to avoid shell escaping issues:
+ * echo "prompt" | claude -p - --dangerously-skip-permissions --output-format json
  */
 export class ClaudeExecutor extends BaseAgentExecutor {
   readonly agentType: AgentType = "claude";
+  private timeout: number;
+  private workingDir: string;
 
   constructor(workingDir: string, timeout: number = 300000) {
-    // Try to find claude - it might be an alias or in a custom location
     const claudePath = process.env.CLAUDE_PATH ||
-      `${process.env.HOME}/.claude/local/claude` ||
-      "claude";
+      `${process.env.HOME}/.claude/local/claude`;
 
     const config: AgentExecutorConfig = {
       command: claudePath,
-      flags: ["-p", "--dangerously-skip-permissions", "--output-format", "json"],
+      flags: ["-p", "-", "--dangerously-skip-permissions", "--output-format", "json"],
       timeout,
       workingDir,
     };
     super(config);
+    this.timeout = timeout;
+    this.workingDir = workingDir;
   }
 
   /**
-   * Build the prompt for Claude
+   * Build the prompt for Claude (Worker wrapper)
    */
   buildPrompt(task: Task, context: ExecutionContext): string {
     return buildWorkerPrompt(task, context);
   }
 
   /**
-   * Build CLI arguments for Claude
+   * Build CLI arguments for Claude (not used with new approach)
    */
   buildArgs(prompt: string): string[] {
-    // Claude uses -p for the prompt followed by the prompt text
-    // Escape the prompt for shell
-    const escapedPrompt = prompt.replace(/'/g, "'\\''");
-    return [...this.config.flags.slice(0, 1), `'${escapedPrompt}'`, ...this.config.flags.slice(1)];
+    // This is now handled by runClaude utility
+    return [prompt];
   }
 
   /**
@@ -60,7 +56,6 @@ export class ClaudeExecutor extends BaseAgentExecutor {
   parseOutput(output: string): ParsedOutput {
     try {
       // Claude with --output-format json returns structured output
-      // Try to find JSON in the output
       const jsonMatch = output.match(/\{[\s\S]*"status"[\s\S]*\}/);
 
       if (jsonMatch) {
@@ -108,17 +103,61 @@ export class ClaudeExecutor extends BaseAgentExecutor {
   }
 
   /**
-   * Override runCli to handle Claude-specific behavior
+   * Override runCli to use the new stdin approach
    */
   protected override async runCli(
     args: string[]
   ): Promise<{ output: string; exitCode: number }> {
-    // For Claude, we construct the command differently
-    // claude -p 'prompt' --dangerously-skip-permissions --output-format json
-    const prompt = args[1]; // The escaped prompt is at index 1
-    const flags = [args[0], prompt, ...args.slice(2)];
+    // args[0] is the prompt (from buildArgs)
+    const prompt = args[0];
 
-    return super.runCli(flags);
+    logger.info(`[Claude] Executing via stdin approach...`);
+    logger.debug(`[Claude] Working dir: ${this.workingDir}`);
+    logger.debug(`[Claude] Prompt preview: ${prompt.slice(0, 200)}...`);
+
+    const result = await runClaude(prompt, {
+      cwd: this.workingDir,
+      timeout: this.timeout,
+    });
+
+    logger.debug(`[Claude] Exit code: ${result.exitCode}`);
+    logger.debug(`[Claude] Command: ${result.command}`);
+
+    // Extract actual result from Claude's JSON wrapper
+    const output = this.extractClaudeResult(result.stdout + result.stderr);
+
+    return {
+      output,
+      exitCode: result.exitCode,
+    };
+  }
+
+  /**
+   * Extract the actual result from Claude's JSON output wrapper
+   * Claude returns: {"type":"result","result":"actual content",...}
+   * We want just the "actual content"
+   */
+  private extractClaudeResult(rawOutput: string): string {
+    logger.debug(`[Claude] Raw output (${rawOutput.length} chars):`);
+    logger.debug(`[Claude] ${rawOutput.slice(0, 500)}...`);
+
+    try {
+      const parsed = JSON.parse(rawOutput);
+      if (parsed.type === "result" && parsed.result) {
+        logger.info(`[Claude] Extracted result (${parsed.result.length} chars)`);
+        logger.debug(`[Claude] Result preview: ${parsed.result.slice(0, 300)}...`);
+        return parsed.result;
+      }
+      // If it's an error result
+      if (parsed.is_error) {
+        logger.error(`[Claude] Error result: ${parsed.result}`);
+        return parsed.result || rawOutput;
+      }
+    } catch {
+      // Not JSON or parsing failed, return raw
+      logger.warn(`[Claude] Output is not JSON wrapper, using raw`);
+    }
+    return rawOutput;
   }
 }
 

@@ -58,6 +58,63 @@ export abstract class BaseAgentExecutor {
   abstract parseOutput(output: string): ParsedOutput;
 
   /**
+   * Execute a raw prompt directly (for Planner/Judge - no Worker wrapper)
+   */
+  async executeRaw(prompt: string, taskTitle: string): Promise<ExecutionResult> {
+    const startTime = Date.now();
+    const args = this.buildArgs(prompt);
+
+    logger.info(`[${this.agentType}] Executing: ${taskTitle}`);
+    logger.debug(`[${this.agentType}] Raw prompt execution`);
+
+    try {
+      const result = await this.runCli(args);
+      const durationMs = Date.now() - startTime;
+
+      if (result.exitCode !== 0) {
+        const errorCategory = detectError(result.output, result.exitCode);
+        logger.error(`[${this.agentType}] Failed: ${errorCategory}`);
+
+        return {
+          success: false,
+          output: result.output,
+          error: {
+            category: errorCategory,
+            message: this.extractErrorMessage(result.output),
+          },
+          exitCode: result.exitCode,
+          durationMs,
+        };
+      }
+
+      // For raw execution, just return the output
+      return {
+        success: true,
+        output: result.output,
+        exitCode: 0,
+        durationMs,
+      };
+
+    } catch (err) {
+      const durationMs = Date.now() - startTime;
+      const message = err instanceof Error ? err.message : String(err);
+
+      logger.error(`[${this.agentType}] Execution error: ${message}`);
+
+      return {
+        success: false,
+        output: "",
+        error: {
+          category: detectError(message, 1),
+          message,
+        },
+        exitCode: 1,
+        durationMs,
+      };
+    }
+  }
+
+  /**
    * Execute a task with this agent
    */
   async execute(task: Task, context: ExecutionContext): Promise<ExecutionResult> {

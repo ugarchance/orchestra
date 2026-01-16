@@ -54,28 +54,12 @@ export class PlannerRunner {
       pending: pendingTasks,
     });
 
-    // Create a pseudo-task for the planner
-    const plannerTask: Task = {
-      id: `planner-${cycle.current}`,
-      title: "Plan next batch of tasks",
-      description: prompt,
-      status: "in_progress",
-      assigned_agent: null,
-      worker_id: null,
-      files: [],
-      created_by: "system",
-      created_at: new Date().toISOString(),
-      started_at: new Date().toISOString(),
-      completed_at: null,
-      attempts: 0,
-      max_attempts: 3,
-      last_error: null,
-      agent_history: [],
-    };
-
     try {
-      // Execute with any available agent
-      const { result } = await this.executorManager.executeTask(plannerTask, context);
+      // Execute raw prompt (no Worker wrapper for Planner)
+      const { result } = await this.executorManager.executeRawPrompt(
+        prompt,
+        `Planner cycle ${cycle.current}`
+      );
 
       if (!result.success) {
         logger.error(`[Planner] Failed to generate tasks: ${result.error?.message}`);
@@ -191,27 +175,12 @@ export class PlannerRunner {
       `Parent analysis: ${parentAnalysis}\nFocus files: ${focusArea.files.join(", ")}`
     );
 
-    // Create pseudo-task for sub-planner
-    const subPlannerTask: Task = {
-      id: `sub-planner-${focusArea.name}-${Date.now()}`,
-      title: `Sub-plan for ${focusArea.name}`,
-      description: prompt,
-      status: "in_progress",
-      assigned_agent: null,
-      worker_id: null,
-      files: focusArea.files,
-      created_by: "planner",
-      created_at: new Date().toISOString(),
-      started_at: new Date().toISOString(),
-      completed_at: null,
-      attempts: 0,
-      max_attempts: 2,
-      last_error: null,
-      agent_history: [],
-    };
-
     try {
-      const { result } = await this.executorManager.executeTask(subPlannerTask, context);
+      // Execute raw prompt (no Worker wrapper for Sub-Planner)
+      const { result } = await this.executorManager.executeRawPrompt(
+        prompt,
+        `Sub-Planner: ${focusArea.name}`
+      );
 
       if (!result.success) {
         logger.warn(`[Sub-Planner] Failed for ${focusArea.name}: ${result.error?.message}`);

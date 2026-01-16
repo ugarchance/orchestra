@@ -253,6 +253,94 @@ export class AgentExecutorManager {
   }
 
   /**
+   * Execute a raw prompt directly (for Planner/Judge - no Worker wrapper)
+   * This bypasses the Worker prompt template and executes the prompt as-is
+   */
+  async executeRawPrompt(
+    prompt: string,
+    title: string
+  ): Promise<{
+    result: ExecutionResult;
+    agent: AgentType;
+    error?: ErrorInfo;
+  }> {
+    // Select an agent
+    const selection = await selectAgent(this.projectPath);
+
+    if (selection.type === "wait") {
+      logger.warn(`No agents available. ${selection.reason}`);
+      throw new Error(selection.reason);
+    }
+
+    if (selection.type === "pause") {
+      logger.error(`System paused: ${selection.reason}`);
+      throw new Error(selection.reason);
+    }
+
+    const agent = selection.agent;
+    const executor = this.executors.get(agent);
+
+    if (!executor) {
+      throw new Error(`No executor found for agent: ${agent}`);
+    }
+
+    // Mark agent as busy
+    await markAgentBusy(this.projectPath, agent);
+    logger.info(`[Raw] Selected agent: ${agent} for ${title}`);
+
+    try {
+      // Execute raw prompt (no Worker wrapper)
+      const result = await executor.executeRaw(prompt, title);
+
+      if (result.success) {
+        await recordAgentSuccess(this.projectPath, agent, result.durationMs);
+        await markAgentAvailable(this.projectPath, agent);
+        return { result, agent };
+      } else {
+        const errorCategory = result.error?.category || "unknown";
+        const errorInfo = createErrorInfo(
+          errorCategory,
+          result.error?.message || "Unknown error",
+          agent,
+          result.output.slice(-500)
+        );
+
+        // Check for rate limit
+        if (this.isRateLimited(agent, result.output)) {
+          const cooldown = this.getCooldownMinutes(agent);
+          await markAgentRateLimited(this.projectPath, agent, cooldown);
+          logger.warn(`Agent ${agent} rate limited. Cooldown: ${cooldown} minutes`);
+        } else {
+          await recordAgentFailure(this.projectPath, agent, errorCategory);
+          await markAgentAvailable(this.projectPath, agent);
+        }
+
+        return { result, agent, error: errorInfo };
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorCategory = detectError(message, 1);
+
+      await recordAgentFailure(this.projectPath, agent, errorCategory);
+      await markAgentAvailable(this.projectPath, agent);
+
+      const errorInfo = createErrorInfo(errorCategory, message, agent, "");
+
+      return {
+        result: {
+          success: false,
+          output: message,
+          error: { category: errorCategory, message },
+          exitCode: 1,
+          durationMs: 0,
+        },
+        agent,
+        error: errorInfo,
+      };
+    }
+  }
+
+  /**
    * Get executor for a specific agent
    */
   getExecutor(agent: AgentType): BaseAgentExecutor | undefined {

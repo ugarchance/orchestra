@@ -5,9 +5,13 @@ import {
   BaseAgentExecutor,
   type AgentExecutorConfig,
   type ExecutionContext,
+  type ExecutionResult,
   type ParsedOutput,
 } from "./base.js";
 import { buildWorkerPrompt } from "./prompts.js";
+import { detectError } from "../core/errors.js";
+import { runOpenCode } from "../utils/cli.js";
+import logger from "../utils/logger.js";
 
 /**
  * OpenCode configuration file content
@@ -69,6 +73,67 @@ export class OpenCodeExecutor extends BaseAgentExecutor {
     // opencode run --format json "prompt"
     const escapedPrompt = prompt.replace(/"/g, '\\"').replace(/\n/g, "\\n");
     return [...this.config.flags, `"${escapedPrompt}"`];
+  }
+
+  /**
+   * Override executeRaw to use cli utility
+   */
+  async executeRaw(prompt: string, taskTitle: string): Promise<ExecutionResult> {
+    const startTime = Date.now();
+
+    logger.info(`[${this.agentType}] Executing: ${taskTitle}`);
+    logger.debug(`[${this.agentType}] Raw prompt execution`);
+
+    // Ensure config exists
+    await this.ensureConfig();
+
+    try {
+      const result = await runOpenCode(prompt, {
+        cwd: this.config.workingDir,
+        timeout: this.config.timeout,
+      });
+
+      const durationMs = Date.now() - startTime;
+
+      if (result.exitCode !== 0) {
+        const errorCategory = detectError(result.stdout + result.stderr, result.exitCode);
+        logger.error(`[${this.agentType}] Failed: ${errorCategory}`);
+
+        return {
+          success: false,
+          output: result.stdout + result.stderr,
+          error: {
+            category: errorCategory,
+            message: this.extractErrorMessage(result.stdout + result.stderr),
+          },
+          exitCode: result.exitCode,
+          durationMs,
+        };
+      }
+
+      return {
+        success: true,
+        output: result.stdout + result.stderr,
+        exitCode: 0,
+        durationMs,
+      };
+    } catch (err) {
+      const durationMs = Date.now() - startTime;
+      const message = err instanceof Error ? err.message : String(err);
+
+      logger.error(`[${this.agentType}] Execution error: ${message}`);
+
+      return {
+        success: false,
+        output: "",
+        error: {
+          category: detectError(message, 1),
+          message,
+        },
+        exitCode: 1,
+        durationMs,
+      };
+    }
   }
 
   /**

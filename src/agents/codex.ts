@@ -9,6 +9,7 @@ import {
 } from "./base.js";
 import { buildWorkerPrompt } from "./prompts.js";
 import { detectError } from "../core/errors.js";
+import { runCodex } from "../utils/cli.js";
 import logger from "../utils/logger.js";
 
 /**
@@ -45,6 +46,64 @@ export class CodexExecutor extends BaseAgentExecutor {
    */
   buildArgs(prompt: string): string[] {
     return [prompt, ...this.config.flags];
+  }
+
+  /**
+   * Override executeRaw to use file-based prompt approach
+   */
+  async executeRaw(prompt: string, taskTitle: string): Promise<ExecutionResult> {
+    const startTime = Date.now();
+
+    logger.info(`[${this.agentType}] Executing: ${taskTitle}`);
+    logger.debug(`[${this.agentType}] Raw prompt execution via file`);
+
+    try {
+      const result = await runCodex(prompt, {
+        cwd: this.config.workingDir,
+        timeout: this.config.timeout,
+      });
+
+      const durationMs = Date.now() - startTime;
+
+      if (result.exitCode !== 0) {
+        const errorCategory = detectError(result.stdout + result.stderr, result.exitCode);
+        logger.error(`[${this.agentType}] Failed: ${errorCategory}`);
+
+        return {
+          success: false,
+          output: result.stdout + result.stderr,
+          error: {
+            category: errorCategory,
+            message: this.extractErrorMessage(result.stdout + result.stderr),
+          },
+          exitCode: result.exitCode,
+          durationMs,
+        };
+      }
+
+      return {
+        success: true,
+        output: result.stdout + result.stderr,
+        exitCode: 0,
+        durationMs,
+      };
+    } catch (err) {
+      const durationMs = Date.now() - startTime;
+      const message = err instanceof Error ? err.message : String(err);
+
+      logger.error(`[${this.agentType}] Execution error: ${message}`);
+
+      return {
+        success: false,
+        output: "",
+        error: {
+          category: detectError(message, 1),
+          message,
+        },
+        exitCode: 1,
+        durationMs,
+      };
+    }
   }
 
   /**
