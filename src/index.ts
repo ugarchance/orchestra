@@ -3,6 +3,7 @@
 import { Command } from "commander";
 import {
   startCommand,
+  runCommand,
   statusCommand,
   resumeCommand,
   pauseCommand,
@@ -18,16 +19,31 @@ program
   .description("Multi-agent coding orchestration system")
   .version("0.1.0");
 
-// Start command
+// Start command (initialize only)
 program
   .command("start")
-  .description("Start a new orchestra session")
+  .description("Initialize a new orchestra session (without running)")
   .argument("<goal>", "The goal for this session")
   .argument("[project-path]", "Path to the project", ".")
   .option("-c, --max-cycles <number>", "Maximum number of cycles", "20")
   .action(async (goal: string, projectPath: string, options: { maxCycles: string }) => {
     await startCommand(goal, projectPath, {
       maxCycles: parseInt(options.maxCycles, 10),
+    });
+  });
+
+// Run command (main execution loop)
+program
+  .command("run")
+  .description("Run the orchestra - executes Planner/Worker/Judge cycles")
+  .argument("<goal>", "The goal to achieve")
+  .argument("[project-path]", "Path to the project", ".")
+  .option("-c, --max-cycles <number>", "Maximum number of cycles", "20")
+  .option("-w, --max-workers <number>", "Maximum concurrent workers", "3")
+  .action(async (goal: string, projectPath: string, options: { maxCycles: string; maxWorkers: string }) => {
+    await runCommand(goal, projectPath, {
+      maxCycles: parseInt(options.maxCycles, 10),
+      maxWorkers: parseInt(options.maxWorkers, 10),
     });
   });
 

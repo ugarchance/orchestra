@@ -260,3 +260,58 @@ export interface StatusInfo {
   agents: AgentPool;
   tasks: Task[];
 }
+
+// =============================================================================
+// PLANNER OUTPUT TYPES
+// =============================================================================
+
+export interface PlannerTaskOutput {
+  title: string;
+  description: string;
+  files: string[];
+  success_criteria: string;
+  priority: number;
+}
+
+export interface PlannerOutput {
+  analysis: string;
+  tasks: PlannerTaskOutput[];
+}
+
+// =============================================================================
+// JUDGE OUTPUT TYPES
+// =============================================================================
+
+export type JudgeDecision = "CONTINUE" | "COMPLETE" | "ABORT";
+
+export interface JudgeOutput {
+  decision: JudgeDecision;
+  reasoning: string;
+  progress_percent: number;
+  issues: string[];
+  recommendations: string[];
+}
+
+// =============================================================================
+// ORCHESTRATOR TYPES
+// =============================================================================
+
+export interface CycleResult {
+  cycle: number;
+  tasksCreated: number;
+  tasksCompleted: number;
+  tasksFailed: number;
+  judgeDecision: JudgeDecision;
+  durationMs: number;
+}
+
+export interface OrchestraResult {
+  success: boolean;
+  finalStatus: SystemStatus;
+  totalCycles: number;
+  totalTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  durationMs: number;
+  message: string;
+}

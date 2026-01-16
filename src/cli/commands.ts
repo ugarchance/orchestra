@@ -23,6 +23,7 @@ import {
 } from "../core/agents.js";
 import { ensureProjectDataDir } from "../utils/paths.js";
 import { createExecutorManager } from "../agents/executor.js";
+import { createOrchestra } from "../core/orchestrator.js";
 import type { AgentType, OrchestraState } from "../types/index.js";
 
 /**
@@ -69,7 +70,81 @@ export async function startCommand(
   logger.raw(chalk.dim("─".repeat(50)));
   console.log("");
   logger.info("Session initialized. Ready to run.");
-  logger.info("Note: Execution loop not yet implemented (Sprint 1)");
+  logger.info("Use 'orchestra run' to start the execution loop.");
+}
+
+/**
+ * Run the orchestra (main execution loop)
+ */
+export async function runCommand(
+  goal: string,
+  projectPath: string,
+  options: { maxCycles?: number; maxWorkers?: number }
+): Promise<void> {
+  const absPath = resolve(projectPath);
+
+  logger.section("Orchestra Run");
+  logger.info(`Goal: ${goal}`);
+  logger.info(`Project: ${absPath}`);
+  logger.info(`Max cycles: ${options.maxCycles ?? 20}`);
+  logger.info(`Max workers: ${options.maxWorkers ?? 3}`);
+
+  console.log("");
+  logger.raw(chalk.dim("─".repeat(60)));
+  console.log("");
+
+  // Create and run orchestra
+  const orchestra = createOrchestra(absPath, {
+    maxCycles: options.maxCycles,
+    maxWorkers: options.maxWorkers,
+  });
+
+  try {
+    const result = await orchestra.start(goal);
+
+    console.log("");
+    logger.raw(chalk.dim("─".repeat(60)));
+    console.log("");
+
+    // Show result
+    if (result.success) {
+      logger.success("GOAL ACHIEVED!");
+    } else {
+      logger.error("GOAL NOT ACHIEVED");
+    }
+
+    console.log("");
+    console.log(chalk.bold("Summary:"));
+    console.log(`  Status: ${formatStatus(result.finalStatus)}`);
+    console.log(`  Cycles: ${result.totalCycles}`);
+    console.log(`  Tasks created: ${result.totalTasks}`);
+    console.log(`  Tasks completed: ${chalk.green(result.completedTasks)}`);
+    console.log(`  Tasks failed: ${chalk.red(result.failedTasks)}`);
+    console.log(`  Duration: ${formatDuration(result.durationMs)}`);
+    console.log("");
+    console.log(chalk.dim(result.message));
+
+  } catch (err) {
+    logger.error(`Orchestra failed: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Format duration in human-readable format
+ */
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+  } else if (minutes > 0) {
+    return `${minutes}m ${seconds % 60}s`;
+  } else {
+    return `${seconds}s`;
+  }
 }
 
 /**
@@ -177,10 +252,27 @@ export async function resumeCommand(projectPath: string): Promise<void> {
 
   // Update state
   await updateStatus(absPath, "running", null);
-  logger.success("Session resumed");
+  logger.success("Session ready to resume");
 
-  console.log("");
-  logger.info("Note: Execution loop not yet implemented (Sprint 1)");
+  // Run the orchestra
+  const orchestra = createOrchestra(absPath);
+
+  try {
+    const result = await orchestra.resume();
+
+    console.log("");
+    logger.raw(chalk.dim("─".repeat(60)));
+    console.log("");
+
+    if (result.success) {
+      logger.success("Session completed!");
+    } else {
+      logger.warn(`Session ended: ${result.message}`);
+    }
+  } catch (err) {
+    logger.error(`Resume failed: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
 }
 
 /**
