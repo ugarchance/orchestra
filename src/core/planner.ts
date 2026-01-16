@@ -1,10 +1,19 @@
 import type { Task, PlannerOutput, PlannerTaskOutput } from "../types/index.js";
 import type { ExecutionContext } from "../agents/base.js";
-import { buildPlannerPrompt } from "../agents/prompts.js";
+import { buildPlannerPrompt, buildSubPlannerPrompt } from "../agents/prompts.js";
 import { AgentExecutorManager } from "../agents/executor.js";
 import { createTask, loadTasks, addTask } from "./tasks.js";
 import { loadState, updateStats } from "./state.js";
 import logger from "../utils/logger.js";
+
+/**
+ * Sub-planner focus areas that can be spawned
+ */
+export interface SubPlannerArea {
+  name: string;
+  description: string;
+  files: string[];
+}
 
 /**
  * Planner Runner
@@ -126,9 +135,6 @@ export class PlannerRunner {
   private parsePlannerOutput(output: string): PlannerOutput | null {
     try {
       // Try to find JSON in the output
-      // Planner should output JSON like: { "analysis": "...", "tasks": [...] }
-
-      // Look for JSON object with analysis and tasks
       const jsonPatterns = [
         /\{[\s\S]*"analysis"[\s\S]*"tasks"[\s\S]*\}/,
         /```json\n?([\s\S]*?)```/,
@@ -143,7 +149,6 @@ export class PlannerRunner {
 
           // Validate structure
           if (parsed.analysis && Array.isArray(parsed.tasks)) {
-            // Validate each task
             const validTasks: PlannerTaskOutput[] = parsed.tasks
               .filter((t: PlannerTaskOutput) => t.title && t.description)
               .slice(0, 10); // Max 10 tasks per cycle
@@ -166,6 +171,135 @@ export class PlannerRunner {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Spawn a sub-planner for a specific focus area
+   * Sub-planners create tasks only for their designated area
+   */
+  async spawnSubPlanner(
+    focusArea: SubPlannerArea,
+    context: ExecutionContext,
+    parentAnalysis: string
+  ): Promise<Task[]> {
+    logger.info(`[Sub-Planner] Spawning for area: ${focusArea.name}`);
+
+    // Build sub-planner prompt
+    const prompt = buildSubPlannerPrompt(
+      focusArea.name,
+      context.goal,
+      `Parent analysis: ${parentAnalysis}\nFocus files: ${focusArea.files.join(", ")}`
+    );
+
+    // Create pseudo-task for sub-planner
+    const subPlannerTask: Task = {
+      id: `sub-planner-${focusArea.name}-${Date.now()}`,
+      title: `Sub-plan for ${focusArea.name}`,
+      description: prompt,
+      status: "in_progress",
+      assigned_agent: null,
+      worker_id: null,
+      files: focusArea.files,
+      created_by: "planner",
+      created_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      completed_at: null,
+      attempts: 0,
+      max_attempts: 2,
+      last_error: null,
+      agent_history: [],
+    };
+
+    try {
+      const { result } = await this.executorManager.executeTask(subPlannerTask, context);
+
+      if (!result.success) {
+        logger.warn(`[Sub-Planner] Failed for ${focusArea.name}: ${result.error?.message}`);
+        return [];
+      }
+
+      const output = this.parsePlannerOutput(result.output);
+
+      if (!output) {
+        logger.warn(`[Sub-Planner] Failed to parse output for ${focusArea.name}`);
+        return [];
+      }
+
+      // Create tasks from sub-planner output
+      const newTasks: Task[] = [];
+      for (const taskOutput of output.tasks.slice(0, 5)) { // Max 5 tasks per sub-planner
+        const task = createTask(
+          taskOutput.title,
+          taskOutput.description,
+          `sub-planner:${focusArea.name}`,
+          taskOutput.files
+        );
+
+        await addTask(this.projectPath, task);
+        newTasks.push(task);
+        logger.debug(`[Sub-Planner:${focusArea.name}] Created task: ${task.title}`);
+      }
+
+      logger.info(`[Sub-Planner] ${focusArea.name} created ${newTasks.length} tasks`);
+      return newTasks;
+
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(`[Sub-Planner] Error for ${focusArea.name}: ${message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Run planner with optional sub-planner spawning
+   * When areas are provided, spawns sub-planners in parallel
+   */
+  async runWithSubPlanners(
+    context: ExecutionContext,
+    cycle: { current: number; max: number },
+    focusAreas?: SubPlannerArea[]
+  ): Promise<Task[]> {
+    // First run main planner
+    const mainTasks = await this.run(context, cycle);
+
+    // If no focus areas, just return main tasks
+    if (!focusAreas || focusAreas.length === 0) {
+      return mainTasks;
+    }
+
+    // Get analysis from main planner (simplified)
+    const parentAnalysis = "Main planner analysis";
+
+    // Spawn sub-planners in parallel
+    logger.info(`[Planner] Spawning ${focusAreas.length} sub-planners`);
+
+    const subPlannerPromises = focusAreas.map(area =>
+      this.spawnSubPlanner(area, context, parentAnalysis)
+    );
+
+    const subPlannerResults = await Promise.all(subPlannerPromises);
+
+    // Aggregate all tasks
+    const allTasks = [...mainTasks];
+    for (const tasks of subPlannerResults) {
+      allTasks.push(...tasks);
+    }
+
+    // Update stats
+    const state = await loadState(this.projectPath);
+    if (state) {
+      const newTaskCount = allTasks.length - mainTasks.length;
+      if (newTaskCount > 0) {
+        await updateStats(this.projectPath, {
+          tasks_created: state.stats.tasks_created + newTaskCount,
+          tasks_pending: state.stats.tasks_pending + newTaskCount,
+        });
+      }
+    }
+
+    logger.info(`[Planner] Total tasks: ${allTasks.length} (main: ${mainTasks.length}, sub: ${allTasks.length - mainTasks.length})`);
+
+    return allTasks;
   }
 }
 

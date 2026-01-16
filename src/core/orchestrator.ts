@@ -17,7 +17,6 @@ import {
   updateStats,
 } from "./state.js";
 import {
-  getPendingTasks,
   claimTask,
   markTaskCompleted,
   markTaskFailed,
@@ -26,6 +25,7 @@ import {
   releaseStuckTasks,
 } from "./tasks.js";
 import { createInitialAgentPool, saveAgentPool } from "./agents.js";
+import { eventBus, createWakeupController, type PlannerWakeupController } from "./events.js";
 import logger from "../utils/logger.js";
 import { spawn } from "child_process";
 
@@ -39,9 +39,11 @@ export class Orchestra {
   private judgeRunner: JudgeRunner;
   private executorManager: AgentExecutorManager;
   private maxCycles: number;
+  private maxWorkers: number;
   private timeout: number;
   private initialized: boolean = false;
-  // Note: maxWorkers will be used in Sprint 4 for parallel worker execution
+  private wakeupController: PlannerWakeupController;
+  private plannerWakeupPending: boolean = false;
 
   constructor(
     projectPath: string,
@@ -53,12 +55,27 @@ export class Orchestra {
   ) {
     this.projectPath = projectPath;
     this.maxCycles = options.maxCycles ?? 20;
-    // maxWorkers option is reserved for Sprint 4 (parallel execution)
+    this.maxWorkers = options.maxWorkers ?? 3;
     this.timeout = options.timeout ?? 600000; // 10 min default
 
     this.plannerRunner = new PlannerRunner(projectPath, this.timeout);
     this.judgeRunner = new JudgeRunner(projectPath, this.timeout);
     this.executorManager = new AgentExecutorManager(projectPath, this.timeout);
+
+    // Setup planner wake-up controller
+    // Wakes up planner after every 3 completed tasks
+    this.wakeupController = createWakeupController(3);
+    this.setupWakeupListener();
+  }
+
+  /**
+   * Setup planner wake-up listener
+   */
+  private setupWakeupListener(): void {
+    eventBus.onPlannerWakeup((event) => {
+      logger.info(`[Orchestra] Planner wake-up triggered: ${event.reason}`);
+      this.plannerWakeupPending = true;
+    });
   }
 
   /**
@@ -217,6 +234,22 @@ export class Orchestra {
     const { completed, failed } = await this.executeAllPendingTasks(context);
     logger.info(`[Orchestra] Workers completed: ${completed}, failed: ${failed}`);
 
+    // Check if planner wake-up was triggered during execution
+    if (this.plannerWakeupPending) {
+      logger.info("[Orchestra] Planner wake-up triggered - running additional planning...");
+      this.plannerWakeupPending = false;
+      this.wakeupController.reset();
+
+      const additionalTasks = await this.plannerRunner.run(context, cycle);
+      if (additionalTasks.length > 0) {
+        logger.info(`[Orchestra] Additional planner created ${additionalTasks.length} tasks`);
+
+        // Execute additional tasks
+        const additional = await this.executeAllPendingTasks(context);
+        logger.info(`[Orchestra] Additional workers completed: ${additional.completed}, failed: ${additional.failed}`);
+      }
+    }
+
     // Update stats
     const state = await loadState(this.projectPath);
     if (state) {
@@ -247,70 +280,124 @@ export class Orchestra {
   }
 
   /**
-   * Execute all pending tasks
-   * For now, runs sequentially. Can be parallelized in Sprint 4.
+   * Execute all pending tasks with parallel workers
+   * Up to maxWorkers tasks run concurrently
    */
   private async executeAllPendingTasks(
     context: ExecutionContext
   ): Promise<{ completed: number; failed: number }> {
     let completed = 0;
     let failed = 0;
+    const activeWorkers: Map<string, Promise<void>> = new Map();
 
-    while (true) {
-      // Get next pending task
-      const pendingTasks = await getPendingTasks(this.projectPath);
+    logger.info(`[Orchestra] Starting parallel execution with ${this.maxWorkers} workers`);
 
-      if (pendingTasks.length === 0) {
-        logger.info("[Orchestra] No more pending tasks");
-        break;
-      }
-
-      // Claim the first pending task
-      const task = await claimTask(this.projectPath, "worker-1", "claude");
+    /**
+     * Single worker function - claims and executes one task
+     */
+    const runWorker = async (workerId: string): Promise<{ success: boolean; taskId?: string }> => {
+      // Claim a pending task
+      const task = await claimTask(this.projectPath, workerId, "claude");
 
       if (!task) {
-        break;
+        return { success: false };
       }
 
-      logger.info(`[Orchestra] Executing task: ${task.title}`);
+      logger.info(`[Worker-${workerId}] Executing: ${task.title}`);
 
       try {
-        // Execute the task
         const { result, agent, error } = await this.executorManager.executeTask(task, context);
 
         if (result.success) {
           await markTaskCompleted(this.projectPath, task.id, agent);
-          completed++;
-          logger.success(`[Orchestra] Task completed: ${task.title}`);
-
-          // Commit after each completed task
+          logger.success(`[Worker-${workerId}] Completed: ${task.title}`);
           await this.commitChanges(`Task completed: ${task.title}`);
+
+          // Emit task completed event (triggers planner wake-up check)
+          eventBus.emitTaskCompleted({
+            task,
+            agent,
+            durationMs: result.durationMs,
+          });
+
+          return { success: true, taskId: task.id };
         } else {
-          // Record error
           if (error) {
             await recordTaskError(this.projectPath, task.id, error);
           }
 
-          // Check if max attempts reached
           if (task.attempts >= task.max_attempts) {
             await markTaskFailed(this.projectPath, task.id);
-            failed++;
-            logger.error(`[Orchestra] Task failed (max attempts): ${task.title}`);
+            logger.error(`[Worker-${workerId}] Failed (max attempts): ${task.title}`);
+
+            // Emit task failed event
+            eventBus.emitTaskFailed({
+              task,
+              agent,
+              error: error?.message || "Unknown error",
+            });
+
+            return { success: false, taskId: task.id };
           } else {
-            // Release for retry
             await releaseTask(this.projectPath, task.id);
-            logger.warn(`[Orchestra] Task will retry: ${task.title}`);
+            logger.warn(`[Worker-${workerId}] Will retry: ${task.title}`);
+            return { success: false };
           }
         }
-
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error(`[Orchestra] Task error: ${message}`);
-
-        // Release for retry
+        logger.error(`[Worker-${workerId}] Error: ${message}`);
         await releaseTask(this.projectPath, task.id);
+        return { success: false };
       }
+    };
+
+    /**
+     * Worker loop - keeps running until no more tasks
+     */
+    const workerLoop = async (workerId: string): Promise<{ completed: number; failed: number }> => {
+      let workerCompleted = 0;
+      let workerFailed = 0;
+
+      while (true) {
+        const result = await runWorker(workerId);
+
+        if (!result.taskId && !result.success) {
+          // No task was claimed, worker is done
+          break;
+        }
+
+        if (result.success) {
+          workerCompleted++;
+        } else if (result.taskId) {
+          workerFailed++;
+        }
+        // If no taskId but not success, task was released for retry
+      }
+
+      return { completed: workerCompleted, failed: workerFailed };
+    };
+
+    // Start workers
+    const workerPromises: Promise<{ completed: number; failed: number }>[] = [];
+
+    for (let i = 1; i <= this.maxWorkers; i++) {
+      const workerId = String(i);
+      const promise = workerLoop(workerId);
+      workerPromises.push(promise);
+      activeWorkers.set(workerId, promise.then(() => {}));
     }
+
+    // Wait for all workers to complete
+    const results = await Promise.all(workerPromises);
+
+    // Aggregate results
+    for (const result of results) {
+      completed += result.completed;
+      failed += result.failed;
+    }
+
+    logger.info(`[Orchestra] All workers finished. Completed: ${completed}, Failed: ${failed}`);
 
     return { completed, failed };
   }
