@@ -28,7 +28,11 @@ import {
 import { createInitialAgentPool, saveAgentPool } from "./agents.js";
 import { eventBus, createWakeupController, type PlannerWakeupController } from "./events.js";
 import logger from "../utils/logger.js";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
+import {
+  checkGitRequirements,
+  displayGitCheckResult,
+} from "../utils/git.js";
 
 /**
  * Orchestra - Main orchestrator
@@ -89,6 +93,22 @@ export class Orchestra {
     if (this.initialized) return;
 
     logger.info("[Orchestra] Initializing...");
+
+    // Check git requirements first
+    logger.info("[Orchestra] Checking git requirements...");
+    const gitCheck = await checkGitRequirements(this.projectPath);
+
+    if (!gitCheck.success) {
+      displayGitCheckResult(gitCheck);
+      throw new Error("Git requirements not met. Please fix the issues above and try again.");
+    }
+
+    if (gitCheck.warnings.length > 0) {
+      displayGitCheckResult(gitCheck);
+      logger.warn("[Orchestra] Continuing with warnings...");
+    }
+
+    logger.info("[Orchestra] Git requirements OK");
 
     // Initialize agent pool
     const agentPool = createInitialAgentPool();
@@ -285,6 +305,8 @@ export class Orchestra {
 
   /**
    * Execute all pending tasks with parallel workers
+   * All workers work in the same directory (no worktrees)
+   * Each worker commits only its task's files
    * Up to maxWorkers tasks run concurrently
    */
   private async executeAllPendingTasks(
@@ -292,7 +314,6 @@ export class Orchestra {
   ): Promise<{ completed: number; failed: number }> {
     let completed = 0;
     let failed = 0;
-    const activeWorkers: Map<string, Promise<void>> = new Map();
 
     logger.info(`[Orchestra] Starting parallel execution with ${this.maxWorkers} workers`);
 
@@ -315,7 +336,10 @@ export class Orchestra {
         if (result.success) {
           await markTaskCompleted(this.projectPath, task.id, agent);
           logger.success(`[Worker-${workerId}] Completed: ${task.title}`);
-          await this.commitChanges(`Task completed: ${task.title}`);
+
+          // Commit only task's files (not git add -A)
+          const taskFiles = task.files.length > 0 ? task.files : undefined;
+          await this.commitTaskChanges(workerId, `Task completed: ${task.title}`, taskFiles);
 
           // Emit task completed event (triggers planner wake-up check)
           eventBus.emitTaskCompleted({
@@ -360,7 +384,7 @@ export class Orchestra {
     };
 
     /**
-     * Worker loop - keeps running until no more tasks
+     * Worker loop - runs tasks until no more pending
      */
     const workerLoop = async (workerId: string): Promise<{ completed: number; failed: number }> => {
       let workerCompleted = 0;
@@ -385,14 +409,13 @@ export class Orchestra {
       return { completed: workerCompleted, failed: workerFailed };
     };
 
-    // Start workers
+    // Start workers in parallel
     const workerPromises: Promise<{ completed: number; failed: number }>[] = [];
 
     for (let i = 1; i <= this.maxWorkers; i++) {
       const workerId = String(i);
       const promise = workerLoop(workerId);
       workerPromises.push(promise);
-      activeWorkers.set(workerId, promise.then(() => {}));
     }
 
     // Wait for all workers to complete
@@ -407,6 +430,60 @@ export class Orchestra {
     logger.info(`[Orchestra] All workers finished. Completed: ${completed}, Failed: ${failed}`);
 
     return { completed, failed };
+  }
+
+  /**
+   * Commit task-specific changes with pull --rebase
+   * Only commits the files that were part of the task
+   */
+  private async commitTaskChanges(
+    workerId: string,
+    message: string,
+    files?: string[]
+  ): Promise<boolean> {
+    try {
+      // Step 1: Pull latest changes with rebase
+      try {
+        execSync("git pull --rebase", { cwd: this.projectPath, stdio: "pipe" });
+        logger.debug(`[Worker-${workerId}] Pulled latest changes`);
+      } catch {
+        // Pull might fail if no remote or nothing to pull - that's OK
+        logger.debug(`[Worker-${workerId}] No changes to pull or no remote`);
+      }
+
+      // Step 2: Add only task-specific files (or all if no files specified)
+      if (files && files.length > 0) {
+        // Add only the specified files
+        for (const file of files) {
+          try {
+            execSync(`git add "${file}"`, { cwd: this.projectPath, stdio: "pipe" });
+          } catch {
+            // File might not exist or be outside repo - continue
+            logger.debug(`[Worker-${workerId}] Could not add file: ${file}`);
+          }
+        }
+        logger.debug(`[Worker-${workerId}] Added ${files.length} task files`);
+      } else {
+        // Fallback: add all changes (less ideal but works)
+        execSync("git add -A", { cwd: this.projectPath, stdio: "pipe" });
+        logger.debug(`[Worker-${workerId}] Added all changes (no specific files)`);
+      }
+
+      // Step 3: Commit
+      try {
+        execSync(`git commit -m "${message}"`, { cwd: this.projectPath, stdio: "pipe" });
+        logger.info(`[Worker-${workerId}] Committed: ${message}`);
+        return true;
+      } catch {
+        // Nothing to commit is OK
+        logger.debug(`[Worker-${workerId}] Nothing to commit`);
+        return true;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[Worker-${workerId}] Git commit failed: ${msg}`);
+      return false;
+    }
   }
 
   /**
