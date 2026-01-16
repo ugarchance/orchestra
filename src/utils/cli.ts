@@ -103,6 +103,13 @@ export interface GeminiCliOptions extends CliOptions {
 }
 
 /**
+ * Copilot CLI options (GitHub Copilot)
+ */
+export interface CopilotCliOptions extends CliOptions {
+  model?: string;
+}
+
+/**
  * Execute Claude CLI with a prompt
  * Uses stdin to avoid shell escaping issues
  */
@@ -400,6 +407,85 @@ export async function runGemini(
 
       resolve({
         stdout: extracted,
+        stderr,
+        exitCode: code ?? 1,
+        command,
+      });
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Execute GitHub Copilot CLI with a prompt
+ * copilot -p "prompt" --allow-all-tools -s --model <model>
+ *
+ * Note: Copilot CLI does NOT support JSON output.
+ * We use -s (silent) flag to get only the response without stats.
+ */
+export async function runCopilot(
+  prompt: string,
+  options: CopilotCliOptions = {}
+): Promise<CliResult> {
+  const cwd = options.cwd || process.cwd();
+
+  // Save prompt for debugging
+  await savePrompt(cwd, "copilot", prompt);
+
+  // copilot -p "prompt" --allow-all-tools -s
+  const args: string[] = [
+    "-p", prompt,           // Non-interactive prompt mode
+    "--allow-all-tools",    // Auto-approve all tool usage
+    "-s",                   // Silent mode - only response, no stats
+  ];
+
+  // Add model if specified
+  if (options.model) {
+    args.push("--model", options.model);
+  }
+
+  const command = `copilot -p "..." --allow-all-tools -s${options.model ? ` --model ${options.model}` : ""}`;
+  logger.debug(`[CLI] Running: ${command}`);
+  logger.debug(`[CLI] Prompt length: ${prompt.length} chars`);
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn("copilot", args, {
+      cwd: options.cwd || process.cwd(),
+      env: { ...process.env, ...options.env },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    const timeout = options.timeout || 300000;
+    const timer = setTimeout(() => {
+      proc.kill("SIGTERM");
+      reject(new Error(`Command timed out after ${timeout}ms`));
+    }, timeout);
+
+    proc.on("close", async (code) => {
+      clearTimeout(timer);
+
+      const rawOutput = stdout + stderr;
+
+      // Save response for debugging
+      await saveResponse(cwd, "copilot", rawOutput, rawOutput);
+
+      resolve({
+        stdout,
         stderr,
         exitCode: code ?? 1,
         command,

@@ -166,6 +166,9 @@ export async function runCommand(
   if (modelConfig.gemini) {
     logger.info(`  Gemini: ${modelConfig.gemini.model}`);
   }
+  if (modelConfig.copilot) {
+    logger.info(`  Copilot: ${modelConfig.copilot.model}`);
+  }
 
   console.log("");
   logger.raw(chalk.dim("─".repeat(60)));

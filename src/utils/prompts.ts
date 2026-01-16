@@ -6,6 +6,7 @@ import type {
   CodexModel,
   CodexReasoningLevel,
   GeminiModel,
+  CopilotModel,
 } from "../types/index.js";
 
 const rl = readline.createInterface({
@@ -88,10 +89,23 @@ const GEMINI_MODELS: { value: GeminiModel; label: string }[] = [
 ];
 
 /**
+ * Copilot model options (GitHub Copilot CLI)
+ * Note: Copilot CLI has NO JSON output, only plain text with -s (silent) flag
+ */
+const COPILOT_MODELS: { value: CopilotModel; label: string }[] = [
+  { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5 - Default, most capable" },
+  { value: "claude-opus-4.5", label: "Claude Opus 4.5 - Most powerful" },
+  { value: "claude-haiku-4.5", label: "Claude Haiku 4.5 - Fast" },
+  { value: "gpt-5.2-codex", label: "GPT-5.2 Codex - Latest coding model" },
+  { value: "gpt-5.2", label: "GPT-5.2 - Latest general model" },
+  { value: "gemini-3-pro-preview", label: "Gemini 3 Pro - Google (Preview)" },
+];
+
+/**
  * Prompt user for model configuration
  */
 export async function promptModelConfig(
-  availableAgents: ("claude" | "codex" | "gemini")[]
+  availableAgents: ("claude" | "codex" | "gemini" | "copilot")[]
 ): Promise<ModelConfig> {
   const config: ModelConfig = {};
 
@@ -128,6 +142,15 @@ export async function promptModelConfig(
     console.log(chalk.dim(`  → Using: ${model}`));
   }
 
+  // Copilot (GitHub Copilot CLI)
+  if (availableAgents.includes("copilot")) {
+    console.log("");
+    console.log(chalk.bold.green("GitHub Copilot CLI"));
+    const model = await selectOption("Select Copilot model:", COPILOT_MODELS);
+    config.copilot = { model };
+    console.log(chalk.dim(`  → Using: ${model}`));
+  }
+
   console.log("");
   console.log(chalk.bold.blue("═══════════════════════════════════════════"));
 
@@ -149,6 +172,7 @@ export function getDefaultModelConfig(): ModelConfig {
     claude: { model: "sonnet" },
     codex: { model: "gpt-5.2-codex", reasoningLevel: "medium" },
     gemini: { model: "gemini-3-flash-preview" },
+    copilot: { model: "claude-sonnet-4.5" },
   };
 }
 
@@ -161,6 +185,7 @@ export function getFastModelConfig(): ModelConfig {
     claude: { model: "haiku" },
     codex: { model: "gpt-5.2-codex", reasoningLevel: "low" },
     gemini: { model: "gemini-3-flash-preview" },
+    copilot: { model: "claude-haiku-4.5" },
   };
 }
 
@@ -173,5 +198,6 @@ export function getMaxModelConfig(): ModelConfig {
     claude: { model: "opus" },
     codex: { model: "gpt-5.2-codex", reasoningLevel: "xhigh" },
     gemini: { model: "gemini-3-pro-preview" },
+    copilot: { model: "claude-sonnet-4.5" },
   };
 }

@@ -5,7 +5,7 @@
 // AGENT TYPES
 // =============================================================================
 
-export type AgentType = "claude" | "codex" | "gemini";
+export type AgentType = "claude" | "codex" | "gemini" | "copilot";
 
 export type AgentStatus =
   | "available"      // Ready to use
@@ -267,6 +267,21 @@ export type GeminiModel =
   | "gemini-2.5-pro"
   | "gemini-2.5-flash";
 
+// Copilot models (GitHub Copilot CLI)
+// Use `copilot --help` to see all available models
+export type CopilotModel =
+  | "claude-sonnet-4.5"     // Default, most capable
+  | "claude-opus-4.5"       // Most powerful Claude
+  | "claude-haiku-4.5"      // Fast Claude
+  | "claude-sonnet-4"       // Previous Claude default
+  | "gpt-5.2-codex"         // Latest Codex
+  | "gpt-5.1-codex-max"     // High performance Codex
+  | "gpt-5.1-codex"         // Balanced Codex
+  | "gpt-5.2"               // Latest GPT
+  | "gpt-5.1"               // Previous GPT
+  | "gpt-5"                 // GPT-5 base
+  | "gemini-3-pro-preview"; // Google Gemini
+
 // Model configuration for each agent
 export interface ModelConfig {
   claude?: {
@@ -278,6 +293,9 @@ export interface ModelConfig {
   };
   gemini?: {
     model: GeminiModel;
+  };
+  copilot?: {
+    model: CopilotModel;
   };
 }
 

@@ -78,6 +78,17 @@ npm install -g @openai/codex
 npm install -g @anthropic-ai/gemini-cli
 ```
 
+### GitHub Copilot CLI
+```bash
+# Install via npm
+npm install -g @github/copilot
+
+# Or via Homebrew (macOS/Linux)
+brew install copilot-cli
+
+# Requires GitHub Copilot subscription (Individual/Business/Enterprise)
+```
+
 ## Installation
 
 ```bash
@@ -119,11 +130,11 @@ Orchestra supports three model presets and manual selection:
 
 #### Presets
 
-| Flag | Claude | Codex | Gemini | Use Case |
-|------|--------|-------|--------|----------|
-| `-f, --fast` | Haiku | Low reasoning | Gemini 3 Flash | Quick iterations, testing |
-| `-d, --default` | Sonnet | Medium reasoning | Gemini 3 Flash | Balanced (default) |
-| `-m, --max` | Opus | XHigh reasoning | Gemini 3 Pro | Complex tasks |
+| Flag | Claude | Codex | Gemini | Copilot | Use Case |
+|------|--------|-------|--------|---------|----------|
+| `-f, --fast` | Haiku | Low reasoning | Flash | Haiku 4.5 | Quick iterations |
+| `-d, --default` | Sonnet | Medium | Flash | Sonnet 4.5 | Balanced |
+| `-m, --max` | Opus | XHigh | Pro | Sonnet 4.5 | Complex tasks |
 
 ```bash
 # Fast mode - cheaper & faster
@@ -157,6 +168,14 @@ orchestra run "Implement OAuth2 with refresh tokens" --max
 - `gemini-3-flash-preview` - Fast & efficient (Preview)
 - `gemini-2.5-pro` - Stable, balanced
 - `gemini-2.5-flash` - Stable, quick
+
+**GitHub Copilot:** (no JSON output, uses plain text)
+- `claude-sonnet-4.5` - Default, most capable
+- `claude-opus-4.5` - Most powerful Claude
+- `claude-haiku-4.5` - Fast Claude
+- `gpt-5.2-codex` - Latest Codex
+- `gpt-5.2` - Latest GPT
+- `gemini-3-pro-preview` - Google Gemini (Preview)
 
 ### All Options
 
@@ -271,7 +290,9 @@ Orchestra uses a simple git workflow for parallel workers:
     ├── claude-*-prompt.txt
     ├── claude-*-raw.txt
     ├── claude-*-response.txt
+    ├── codex-*-prompt.txt
     ├── gemini-*-prompt.txt
+    ├── copilot-*-prompt.txt
     └── ...
 
 orchestra/                  # Orchestra source code
@@ -281,6 +302,7 @@ orchestra/                  # Orchestra source code
 │   │   ├── claude.ts      # Claude CLI executor
 │   │   ├── codex.ts       # Codex CLI executor
 │   │   ├── gemini.ts      # Gemini CLI executor
+│   │   ├── copilot.ts     # GitHub Copilot CLI executor
 │   │   ├── executor.ts    # Agent manager & failover
 │   │   └── prompts.ts     # Prompt templates
 │   ├── core/
@@ -313,7 +335,7 @@ Orchestra automatically:
 3. Handles rate limits with cooldowns
 4. Fails over to another agent if one fails
 
-Priority: `claude` → `codex` → `gemini`
+Priority: `claude` → `codex` → `gemini` → `copilot`
 
 ## Debugging
 

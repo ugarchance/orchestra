@@ -8,6 +8,7 @@ import {
 import { ClaudeExecutor, isClaudeRateLimited } from "./claude.js";
 import { CodexExecutor, isCodexRateLimited } from "./codex.js";
 import { GeminiExecutor, isGeminiRateLimited } from "./gemini.js";
+import { CopilotExecutor, isCopilotRateLimited } from "./copilot.js";
 import {
   selectAgent,
   markAgentBusy,
@@ -37,6 +38,7 @@ export class AgentExecutorManager {
     this.executors.set("claude", new ClaudeExecutor(projectPath, timeout, modelConfig?.claude));
     this.executors.set("codex", new CodexExecutor(projectPath, timeout, modelConfig?.codex));
     this.executors.set("gemini", new GeminiExecutor(projectPath, timeout, modelConfig?.gemini));
+    this.executors.set("copilot", new CopilotExecutor(projectPath, timeout, modelConfig?.copilot));
   }
 
   /**
@@ -44,7 +46,7 @@ export class AgentExecutorManager {
    * Also updates agent pool to disable unavailable agents
    */
   async detectAvailableAgents(): Promise<AgentType[]> {
-    const agents: AgentType[] = ["claude", "codex", "gemini"];
+    const agents: AgentType[] = ["claude", "codex", "gemini", "copilot"];
     const available: AgentType[] = [];
 
     for (const agent of agents) {
@@ -234,6 +236,8 @@ export class AgentExecutorManager {
         return isCodexRateLimited(output);
       case "gemini":
         return isGeminiRateLimited(output);
+      case "copilot":
+        return isCopilotRateLimited(output);
       default:
         return false;
     }
@@ -248,6 +252,7 @@ export class AgentExecutorManager {
       claude: 45,
       codex: 30,
       gemini: 30,
+      copilot: 30,  // GitHub Copilot premium request limit
     };
     return cooldowns[agent];
   }
