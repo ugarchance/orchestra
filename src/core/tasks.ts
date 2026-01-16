@@ -8,6 +8,7 @@ import type {
 } from "../types/index.js";
 import { readJson, writeJson } from "../utils/files.js";
 import { getProjectPaths, ensureProjectDataDir } from "../utils/paths.js";
+import logger from "../utils/logger.js";
 
 /**
  * Generate a new task ID
@@ -116,6 +117,12 @@ export async function getPendingTasks(projectPath: string): Promise<Task[]> {
 
 /**
  * Claim a task for a worker
+ *
+ * Following Cursor's approach from scaling-agents.md:
+ * - Workers don't coordinate with each other
+ * - No complex locking - just claim and work
+ * - If conflicts happen, workers handle them (git merge)
+ * - Each worker gets a DIFFERENT pending task (by index)
  */
 export async function claimTask(
   projectPath: string,
@@ -123,20 +130,33 @@ export async function claimTask(
   agent: AgentType
 ): Promise<Task | null> {
   const tasks = await loadTasks(projectPath);
-  const pending = tasks.find((t) => t.status === "pending");
+  const pendingTasks = tasks.filter((t) => t.status === "pending");
 
-  if (!pending) {
+  if (pendingTasks.length === 0) {
     return null;
   }
 
-  pending.status = "in_progress";
-  pending.assigned_agent = agent;
-  pending.worker_id = workerId;
-  pending.started_at = new Date().toISOString();
-  pending.attempts++;
+  // Each worker gets a different task based on worker ID
+  // Worker-1 gets first pending, Worker-2 gets second, etc.
+  const workerIndex = parseInt(workerId, 10) - 1;
+  const taskIndex = workerIndex % pendingTasks.length;
+  const task = pendingTasks[taskIndex];
+
+  if (!task) {
+    return null;
+  }
+
+  // Mark as in_progress
+  task.status = "in_progress";
+  task.assigned_agent = agent;
+  task.worker_id = workerId;
+  task.started_at = new Date().toISOString();
+  task.attempts++;
 
   await saveTasks(projectPath, tasks);
-  return pending;
+
+  logger.debug(`[Worker-${workerId}] Claimed task: ${task.title}`);
+  return task;
 }
 
 /**

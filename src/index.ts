@@ -40,10 +40,36 @@ program
   .argument("[project-path]", "Path to the project", ".")
   .option("-c, --max-cycles <number>", "Maximum number of cycles", "20")
   .option("-w, --max-workers <number>", "Maximum concurrent workers", "3")
-  .action(async (goal: string, projectPath: string, options: { maxCycles: string; maxWorkers: string }) => {
+  // Model presets
+  .option("-d, --default-models", "Skip model selection, use defaults (Sonnet, Medium)")
+  .option("-f, --fast", "Fast mode: Haiku, Low reasoning, Gemini Flash")
+  .option("-m, --max", "Max mode: Opus, XHigh reasoning")
+  // Manual model selection
+  .option("--claude <model>", "Claude model: opus, sonnet, haiku")
+  .option("--codex <model>", "Codex model: gpt-5.2-codex, gpt-5.1-codex-max, gpt-5.1-codex")
+  .option("--reasoning <level>", "Codex reasoning: minimal, low, medium, high, xhigh")
+  .option("--gemini <model>", "Gemini model: gemini-3-pro, gemini-3-flash, gemini-2.5-pro, gemini-2.5-flash")
+  .action(async (goal: string, projectPath: string, options: {
+    maxCycles: string;
+    maxWorkers: string;
+    defaultModels?: boolean;
+    fast?: boolean;
+    max?: boolean;
+    claude?: string;
+    codex?: string;
+    reasoning?: string;
+    gemini?: string;
+  }) => {
     await runCommand(goal, projectPath, {
       maxCycles: parseInt(options.maxCycles, 10),
       maxWorkers: parseInt(options.maxWorkers, 10),
+      skipModelSelect: options.defaultModels,
+      fast: options.fast,
+      max: options.max,
+      claudeModel: options.claude as any,
+      codexModel: options.codex as any,
+      codexReasoning: options.reasoning as any,
+      geminiModel: options.gemini as any,
     });
   });
 

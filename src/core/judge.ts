@@ -1,4 +1,4 @@
-import type { JudgeOutput, JudgeDecision } from "../types/index.js";
+import type { JudgeOutput, JudgeDecision, ModelConfig } from "../types/index.js";
 import type { ExecutionContext } from "../agents/base.js";
 import { buildJudgePrompt } from "../agents/prompts.js";
 import { AgentExecutorManager } from "../agents/executor.js";
@@ -13,9 +13,9 @@ export class JudgeRunner {
   private executorManager: AgentExecutorManager;
   private projectPath: string;
 
-  constructor(projectPath: string, timeout: number = 300000) {
+  constructor(projectPath: string, timeout: number = 300000, modelConfig?: ModelConfig) {
     this.projectPath = projectPath;
-    this.executorManager = new AgentExecutorManager(projectPath, timeout);
+    this.executorManager = new AgentExecutorManager(projectPath, timeout, modelConfig);
   }
 
   /**

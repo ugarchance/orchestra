@@ -34,7 +34,7 @@
         "avg_task_duration_ms": 0
       }
     },
-    "opencode": {
+    "gemini": {
       "status": "available",
       "available_at": null,
       "cooldown_minutes": 0,
@@ -57,7 +57,7 @@
     "fallback_order": [
       "claude",
       "codex",
-      "opencode"
+      "gemini"
     ],
     "min_available_agents": 1,
     "max_consecutive_failures": 3,

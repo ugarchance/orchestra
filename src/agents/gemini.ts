@@ -1,4 +1,4 @@
-import type { AgentType, Task, CodexModel, CodexReasoningLevel } from "../types/index.js";
+import type { AgentType, Task, GeminiModel } from "../types/index.js";
 import {
   BaseAgentExecutor,
   type AgentExecutorConfig,
@@ -8,45 +8,34 @@ import {
 } from "./base.js";
 import { buildWorkerPrompt } from "./prompts.js";
 import { detectError } from "../core/errors.js";
-import { runCodex } from "../utils/cli.js";
+import { runGemini } from "../utils/cli.js";
 import logger from "../utils/logger.js";
 
 /**
- * Codex model config
+ * Gemini model config
  */
-export interface CodexModelConfig {
-  model: CodexModel;
-  reasoningLevel: CodexReasoningLevel;
+export interface GeminiModelConfig {
+  model: GeminiModel;
 }
 
 /**
- * Codex CLI executor
+ * Gemini CLI executor
  *
- * Uses stdin approach: echo "prompt" | codex exec --full-auto --json -m <model> -c model_reasoning_effort="<level>"
+ * Command: gemini -m <model> --approval-mode yolo -o json "prompt"
  */
-export class CodexExecutor extends BaseAgentExecutor {
-  readonly agentType: AgentType = "codex";
+export class GeminiExecutor extends BaseAgentExecutor {
+  readonly agentType: AgentType = "gemini";
   private timeout: number;
   private workingDir: string;
-  private model: CodexModel;
-  private reasoningLevel: CodexReasoningLevel;
+  private model: GeminiModel;
 
-  constructor(workingDir: string, timeout: number = 300000, modelConfig?: CodexModelConfig) {
-    // Default to gpt-5.2-codex with medium reasoning if not specified
-    const model = modelConfig?.model ?? "gpt-5.2-codex";
-    const reasoningLevel = modelConfig?.reasoningLevel ?? "medium";
+  constructor(workingDir: string, timeout: number = 300000, modelConfig?: GeminiModelConfig) {
+    // Default to gemini-3-flash-preview if not specified (fastest Gemini 3 model)
+    const model = modelConfig?.model ?? "gemini-3-flash-preview";
 
     const config: AgentExecutorConfig = {
-      command: "codex",
-      flags: [
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--json",
-        "--skip-git-repo-check",
-        "-m", model,
-        "-c", `model_reasoning_effort="${reasoningLevel}"`,
-        "-"
-      ],
+      command: "gemini",
+      flags: ["-m", model, "--approval-mode", "yolo", "-o", "json"],
       timeout,
       workingDir,
     };
@@ -54,20 +43,19 @@ export class CodexExecutor extends BaseAgentExecutor {
     this.timeout = timeout;
     this.workingDir = workingDir;
     this.model = model;
-    this.reasoningLevel = reasoningLevel;
 
-    logger.info(`[Codex] Using model: ${this.model} with reasoning: ${this.reasoningLevel}`);
+    logger.info(`[Gemini] Using model: ${this.model}`);
   }
 
   /**
-   * Build the prompt for Codex (Worker wrapper)
+   * Build the prompt for Gemini (Worker wrapper)
    */
   buildPrompt(task: Task, context: ExecutionContext): string {
     return buildWorkerPrompt(task, context);
   }
 
   /**
-   * Build CLI arguments for Codex
+   * Build CLI arguments for Gemini
    */
   buildArgs(prompt: string): string[] {
     return [prompt];
@@ -83,11 +71,10 @@ export class CodexExecutor extends BaseAgentExecutor {
     logger.info(`[${this.agentType}] Executing task: ${task.title} with model: ${this.model}`);
 
     try {
-      const result = await runCodex(prompt, {
+      const result = await runGemini(prompt, {
         cwd: this.workingDir,
         timeout: this.timeout,
         model: this.model,
-        reasoningLevel: this.reasoningLevel,
       });
 
       const durationMs = Date.now() - startTime;
@@ -167,14 +154,13 @@ export class CodexExecutor extends BaseAgentExecutor {
     const startTime = Date.now();
 
     logger.info(`[${this.agentType}] Executing: ${taskTitle} with model: ${this.model}`);
-    logger.debug(`[${this.agentType}] Raw prompt execution via stdin`);
+    logger.debug(`[${this.agentType}] Raw prompt execution`);
 
     try {
-      const result = await runCodex(prompt, {
+      const result = await runGemini(prompt, {
         cwd: this.workingDir,
         timeout: this.timeout,
         model: this.model,
-        reasoningLevel: this.reasoningLevel,
       });
 
       const durationMs = Date.now() - startTime;
@@ -229,11 +215,10 @@ export class CodexExecutor extends BaseAgentExecutor {
   ): Promise<{ output: string; exitCode: number }> {
     const prompt = args[0];
 
-    const result = await runCodex(prompt, {
+    const result = await runGemini(prompt, {
       cwd: this.workingDir,
       timeout: this.timeout,
       model: this.model,
-      reasoningLevel: this.reasoningLevel,
     });
 
     return {
@@ -243,7 +228,7 @@ export class CodexExecutor extends BaseAgentExecutor {
   }
 
   /**
-   * Parse Codex output
+   * Parse Gemini output
    */
   parseOutput(output: string): ParsedOutput {
     try {
@@ -297,32 +282,30 @@ export class CodexExecutor extends BaseAgentExecutor {
 }
 
 /**
- * Create a Codex executor with default settings
+ * Create a Gemini executor with default settings
  */
-export function createCodexExecutor(
+export function createGeminiExecutor(
   workingDir: string,
   timeout?: number
-): CodexExecutor {
-  return new CodexExecutor(workingDir, timeout);
+): GeminiExecutor {
+  return new GeminiExecutor(workingDir, timeout);
 }
 
 /**
- * Rate limit patterns specific to Codex/OpenAI
+ * Rate limit patterns specific to Gemini
  */
-export const CODEX_RATE_LIMIT_PATTERNS = [
+export const GEMINI_RATE_LIMIT_PATTERNS = [
   "rate limit",
   "too many requests",
   "quota exceeded",
-  "rate_limit_exceeded",
   "429",
-  "capacity",
-  "overloaded",
+  "resource exhausted",
 ];
 
 /**
- * Check if output indicates Codex rate limit
+ * Check if output indicates Gemini rate limit
  */
-export function isCodexRateLimited(output: string): boolean {
+export function isGeminiRateLimited(output: string): boolean {
   const lower = output.toLowerCase();
-  return CODEX_RATE_LIMIT_PATTERNS.some((pattern) => lower.includes(pattern));
+  return GEMINI_RATE_LIMIT_PATTERNS.some((pattern) => lower.includes(pattern));
 }

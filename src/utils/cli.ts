@@ -78,12 +78,34 @@ export interface CliOptions {
 }
 
 /**
+ * Claude CLI options
+ */
+export interface ClaudeCliOptions extends CliOptions {
+  model?: string;
+}
+
+/**
+ * Codex CLI options
+ */
+export interface CodexCliOptions extends CliOptions {
+  model?: string;
+  reasoningLevel?: string;
+}
+
+/**
+ * Gemini CLI options
+ */
+export interface GeminiCliOptions extends CliOptions {
+  model?: string;
+}
+
+/**
  * Execute Claude CLI with a prompt
  * Uses stdin to avoid shell escaping issues
  */
 export async function runClaude(
   prompt: string,
-  options: CliOptions = {}
+  options: ClaudeCliOptions = {}
 ): Promise<CliResult> {
   const cwd = options.cwd || process.cwd();
 
@@ -98,6 +120,11 @@ export async function runClaude(
     "--dangerously-skip-permissions",
     "--output-format", "json"
   ];
+
+  // Add model if specified
+  if (options.model) {
+    args.push("--model", options.model);
+  }
 
   const command = `${claudePath} ${args.join(" ")}`;
   logger.debug(`[CLI] Running: ${command}`);
@@ -160,21 +187,33 @@ export async function runClaude(
  */
 export async function runCodex(
   prompt: string,
-  options: CliOptions = {}
+  options: CodexCliOptions = {}
 ): Promise<CliResult> {
   const cwd = options.cwd || process.cwd();
 
   // Save prompt for debugging
   await savePrompt(cwd, "codex", prompt);
 
-  // codex exec ... - : "-" at end means read prompt from stdin
+  // codex exec with full access (no sandbox restrictions)
   const args = [
     "exec",
-    "--full-auto",
+    "--dangerously-bypass-approvals-and-sandbox",  // Full access, no sandbox
     "--json",
     "--skip-git-repo-check",
-    "-"  // Read from stdin
   ];
+
+  // Add model if specified
+  if (options.model) {
+    args.push("-m", options.model);
+  }
+
+  // Add reasoning level if specified
+  if (options.reasoningLevel) {
+    args.push("-c", `model_reasoning_effort="${options.reasoningLevel}"`);
+  }
+
+  // Add stdin marker last
+  args.push("-");
 
   const command = `codex ${args.join(" ")}`;
   logger.debug(`[CLI] Running: ${command}`);
@@ -235,58 +274,83 @@ export async function runCodex(
 
 /**
  * Extract actual result from Codex JSONL output
- * Codex outputs multiple JSON lines, we want the item.completed text
+ * Codex outputs multiple JSON lines, we want the agent_message type
+ *
+ * Types:
+ * - item.type === "reasoning" → thinking/planning text (skip)
+ * - item.type === "agent_message" → actual response (use this)
+ * - item.type === "command_execution" → shell commands (skip)
  */
 function extractCodexResult(jsonlOutput: string): string {
   logger.debug(`[Codex] Raw output (${jsonlOutput.length} chars):`);
   logger.debug(`[Codex] ${jsonlOutput.slice(0, 500)}...`);
 
   const lines = jsonlOutput.trim().split("\n");
+  const agentMessages: string[] = [];
 
   for (const line of lines) {
     try {
       const parsed = JSON.parse(line);
-      if (parsed.type === "item.completed" && parsed.item?.text) {
-        logger.info(`[Codex] Extracted result (${parsed.item.text.length} chars)`);
-        logger.debug(`[Codex] Result preview: ${parsed.item.text.slice(0, 300)}...`);
-        return parsed.item.text;
+      // Only extract agent_message type (actual response)
+      if (parsed.type === "item.completed" &&
+          parsed.item?.type === "agent_message" &&
+          parsed.item?.text) {
+        agentMessages.push(parsed.item.text);
       }
     } catch {
       // Skip non-JSON lines
     }
   }
 
+  if (agentMessages.length > 0) {
+    // Combine all agent messages (usually just one)
+    const result = agentMessages.join("\n");
+    logger.info(`[Codex] Extracted ${agentMessages.length} agent message(s) (${result.length} chars)`);
+    logger.debug(`[Codex] Result preview: ${result.slice(0, 300)}...`);
+    return result;
+  }
+
   // Fallback: return raw output
-  logger.warn(`[Codex] Could not extract result, returning raw output`);
+  logger.warn(`[Codex] No agent_message found, returning raw output`);
   return jsonlOutput;
 }
 
 /**
- * Execute OpenCode CLI with a prompt
- * opencode run --format json "prompt"
+ * Execute Gemini CLI with a prompt
+ * gemini -m <model> --approval-mode yolo -o stream-json "prompt"
  */
-export async function runOpenCode(
+export async function runGemini(
   prompt: string,
-  options: CliOptions = {}
+  options: GeminiCliOptions = {}
 ): Promise<CliResult> {
   const cwd = options.cwd || process.cwd();
 
   // Save prompt for debugging
-  await savePrompt(cwd, "opencode", prompt);
+  await savePrompt(cwd, "gemini", prompt);
 
-  // opencode run --format json "prompt"
-  const args = [
-    "run",
-    "--format", "json",
-    prompt
-  ];
+  // gemini -m <model> -y -o stream-json "prompt"
+  const args: string[] = [];
 
-  const command = `opencode run --format json "..."`;
+  // Add model if specified
+  if (options.model) {
+    args.push("-m", options.model);
+  }
+
+  // YOLO mode for auto-approval (-y is short for --yolo)
+  args.push("-y");
+
+  // JSON output for parsing
+  args.push("-o", "stream-json");
+
+  // Add prompt last (positional argument)
+  args.push(prompt);
+
+  const command = `gemini -m ${options.model || "auto"} -y -o stream-json "..."`;
   logger.debug(`[CLI] Running: ${command}`);
   logger.debug(`[CLI] Prompt length: ${prompt.length} chars`);
 
   return new Promise((resolve, reject) => {
-    const proc = spawn("opencode", args, {
+    const proc = spawn("gemini", args, {
       cwd: options.cwd || process.cwd(),
       env: { ...process.env, ...options.env },
       stdio: ["pipe", "pipe", "pipe"],
@@ -312,12 +376,12 @@ export async function runOpenCode(
     proc.on("close", async (code) => {
       clearTimeout(timer);
 
-      // Extract actual response from JSONL output
+      // Extract actual response from stream-json output
       const rawOutput = stdout + stderr;
-      const extracted = extractOpenCodeResult(stdout);
+      const extracted = extractGeminiResult(stdout);
 
       // Save response for debugging
-      await saveResponse(cwd, "opencode", rawOutput, extracted);
+      await saveResponse(cwd, "gemini", rawOutput, extracted);
 
       resolve({
         stdout: extracted,
@@ -335,30 +399,46 @@ export async function runOpenCode(
 }
 
 /**
- * Extract actual result from OpenCode JSONL output
- * OpenCode outputs: {"type":"text","part":{"text":"actual_response",...}}
+ * Extract actual result from Gemini stream-json output
+ *
+ * Format:
+ * {"type":"init",...}
+ * {"type":"message","role":"user","content":"..."}
+ * {"type":"message","role":"assistant","content":"...","delta":true}  <- parça parça geliyor
+ * {"type":"message","role":"assistant","content":"...","delta":true}
+ * {"type":"result","status":"success",...}
  */
-function extractOpenCodeResult(jsonlOutput: string): string {
-  logger.debug(`[OpenCode] Raw output (${jsonlOutput.length} chars):`);
-  logger.debug(`[OpenCode] ${jsonlOutput.slice(0, 500)}...`);
+function extractGeminiResult(jsonlOutput: string): string {
+  logger.debug(`[Gemini] Raw output (${jsonlOutput.length} chars):`);
+  logger.debug(`[Gemini] ${jsonlOutput.slice(0, 500)}...`);
 
   const lines = jsonlOutput.trim().split("\n");
+  const assistantParts: string[] = [];
 
   for (const line of lines) {
     try {
       const parsed = JSON.parse(line);
-      if (parsed.type === "text" && parsed.part?.text) {
-        logger.info(`[OpenCode] Extracted result (${parsed.part.text.length} chars)`);
-        logger.debug(`[OpenCode] Result preview: ${parsed.part.text.slice(0, 300)}...`);
-        return parsed.part.text;
+      // Extract assistant message parts (delta: true means streaming)
+      if (parsed.type === "message" &&
+          parsed.role === "assistant" &&
+          parsed.content) {
+        assistantParts.push(parsed.content);
       }
     } catch {
-      // Skip non-JSON lines
+      // Skip non-JSON lines (stderr noise, warnings, etc.)
     }
   }
 
+  if (assistantParts.length > 0) {
+    // Concatenate all delta parts (no newline, they're continuous)
+    const result = assistantParts.join("");
+    logger.info(`[Gemini] Extracted ${assistantParts.length} assistant part(s) (${result.length} chars)`);
+    logger.debug(`[Gemini] Result preview: ${result.slice(0, 300)}...`);
+    return result;
+  }
+
   // Fallback: return raw output
-  logger.warn(`[OpenCode] Could not extract result, returning raw output`);
+  logger.warn(`[Gemini] No assistant message found, returning raw output`);
   return jsonlOutput;
 }
 

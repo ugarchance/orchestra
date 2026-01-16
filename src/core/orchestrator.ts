@@ -3,6 +3,7 @@ import type {
   CycleResult,
   JudgeDecision,
   SystemStatus,
+  ModelConfig,
 } from "../types/index.js";
 import type { ExecutionContext } from "../agents/base.js";
 import { PlannerRunner } from "./planner.js";
@@ -41,6 +42,7 @@ export class Orchestra {
   private maxCycles: number;
   private maxWorkers: number;
   private timeout: number;
+  private modelConfig?: ModelConfig;
   private initialized: boolean = false;
   private wakeupController: PlannerWakeupController;
   private plannerWakeupPending: boolean = false;
@@ -51,16 +53,18 @@ export class Orchestra {
       maxCycles?: number;
       maxWorkers?: number;
       timeout?: number;
+      modelConfig?: ModelConfig;
     } = {}
   ) {
     this.projectPath = projectPath;
     this.maxCycles = options.maxCycles ?? 20;
     this.maxWorkers = options.maxWorkers ?? 3;
     this.timeout = options.timeout ?? 600000; // 10 min default
+    this.modelConfig = options.modelConfig;
 
-    this.plannerRunner = new PlannerRunner(projectPath, this.timeout);
-    this.judgeRunner = new JudgeRunner(projectPath, this.timeout);
-    this.executorManager = new AgentExecutorManager(projectPath, this.timeout);
+    this.plannerRunner = new PlannerRunner(projectPath, this.timeout, this.modelConfig);
+    this.judgeRunner = new JudgeRunner(projectPath, this.timeout, this.modelConfig);
+    this.executorManager = new AgentExecutorManager(projectPath, this.timeout, this.modelConfig);
 
     // Setup planner wake-up controller
     // Wakes up planner after every 3 completed tasks
@@ -95,7 +99,7 @@ export class Orchestra {
     logger.info(`[Orchestra] Available agents: ${available.join(", ")}`);
 
     if (available.length === 0) {
-      throw new Error("No agents available. Install claude, codex, or opencode.");
+      throw new Error("No agents available. Install claude, codex, or gemini.");
     }
 
     // Initialize planner and judge
@@ -346,7 +350,10 @@ export class Orchestra {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        const stack = err instanceof Error ? err.stack : "";
         logger.error(`[Worker-${workerId}] Error: ${message}`);
+        logger.error(`[Worker-${workerId}] Stack: ${stack}`);
+        logger.error(`[Worker-${workerId}] Task: ${task.title} (${task.id})`);
         await releaseTask(this.projectPath, task.id);
         return { success: false };
       }
@@ -551,6 +558,7 @@ export function createOrchestra(
     maxCycles?: number;
     maxWorkers?: number;
     timeout?: number;
+    modelConfig?: ModelConfig;
   }
 ): Orchestra {
   return new Orchestra(projectPath, options);

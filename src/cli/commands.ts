@@ -24,7 +24,8 @@ import {
 import { ensureProjectDataDir } from "../utils/paths.js";
 import { createExecutorManager } from "../agents/executor.js";
 import { createOrchestra } from "../core/orchestrator.js";
-import type { AgentType, OrchestraState } from "../types/index.js";
+import { promptModelConfig, closePrompts, getDefaultModelConfig, getFastModelConfig, getMaxModelConfig } from "../utils/prompts.js";
+import type { AgentType, OrchestraState, ModelConfig, ClaudeModel, CodexModel, CodexReasoningLevel, GeminiModel } from "../types/index.js";
 
 /**
  * Start a new orchestra session
@@ -74,12 +75,29 @@ export async function startCommand(
 }
 
 /**
+ * Run command options
+ */
+export interface RunCommandOptions {
+  maxCycles?: number;
+  maxWorkers?: number;
+  // Model presets
+  skipModelSelect?: boolean;  // Use defaults
+  fast?: boolean;             // Use fast/cheap models
+  max?: boolean;              // Use most capable models
+  // Manual model selection
+  claudeModel?: ClaudeModel;
+  codexModel?: CodexModel;
+  codexReasoning?: CodexReasoningLevel;
+  geminiModel?: GeminiModel;
+}
+
+/**
  * Run the orchestra (main execution loop)
  */
 export async function runCommand(
   goal: string,
   projectPath: string,
-  options: { maxCycles?: number; maxWorkers?: number }
+  options: RunCommandOptions
 ): Promise<void> {
   const absPath = resolve(projectPath);
 
@@ -89,6 +107,66 @@ export async function runCommand(
   logger.info(`Max cycles: ${options.maxCycles ?? 20}`);
   logger.info(`Max workers: ${options.maxWorkers ?? 3}`);
 
+  // Detect available agents first
+  const tempManager = createExecutorManager(absPath);
+  const availableAgents = await tempManager.detectAvailableAgents();
+
+  if (availableAgents.length === 0) {
+    logger.error("No agents available!");
+    logger.info("Please install at least one of: claude, codex, gemini");
+    process.exit(1);
+  }
+
+  logger.info(`Available agents: ${availableAgents.join(", ")}`);
+
+  // Model selection - priority: manual > preset > interactive
+  let modelConfig: ModelConfig;
+
+  // Check for manual model selection
+  const hasManualSelection = options.claudeModel || options.codexModel ||
+                             options.codexReasoning || options.geminiModel;
+
+  if (hasManualSelection) {
+    // Build config from manual options
+    modelConfig = getDefaultModelConfig();
+    if (options.claudeModel) {
+      modelConfig.claude = { model: options.claudeModel };
+    }
+    if (options.codexModel || options.codexReasoning) {
+      modelConfig.codex = {
+        model: options.codexModel ?? "gpt-5.2-codex",
+        reasoningLevel: options.codexReasoning ?? "medium",
+      };
+    }
+    if (options.geminiModel) {
+      modelConfig.gemini = { model: options.geminiModel };
+    }
+    logger.info("Using manual model configuration");
+  } else if (options.fast) {
+    modelConfig = getFastModelConfig();
+    logger.info("Using FAST mode (Haiku, Low reasoning, Gemini Flash)");
+  } else if (options.max) {
+    modelConfig = getMaxModelConfig();
+    logger.info("Using MAX mode (Opus, XHigh reasoning)");
+  } else if (options.skipModelSelect) {
+    modelConfig = getDefaultModelConfig();
+    logger.info("Using default model configuration");
+  } else {
+    modelConfig = await promptModelConfig(availableAgents);
+    closePrompts();
+  }
+
+  // Log selected models
+  if (modelConfig.claude) {
+    logger.info(`  Claude: ${modelConfig.claude.model}`);
+  }
+  if (modelConfig.codex) {
+    logger.info(`  Codex: ${modelConfig.codex.model} (${modelConfig.codex.reasoningLevel})`);
+  }
+  if (modelConfig.gemini) {
+    logger.info(`  Gemini: ${modelConfig.gemini.model}`);
+  }
+
   console.log("");
   logger.raw(chalk.dim("─".repeat(60)));
   console.log("");
@@ -97,6 +175,7 @@ export async function runCommand(
   const orchestra = createOrchestra(absPath, {
     maxCycles: options.maxCycles,
     maxWorkers: options.maxWorkers,
+    modelConfig,
   });
 
   try {
@@ -195,7 +274,7 @@ export async function statusCommand(projectPath: string): Promise<void> {
   // Agent status
   console.log("");
   console.log(chalk.bold("Agents:"));
-  for (const agent of ["claude", "codex", "opencode"] as AgentType[]) {
+  for (const agent of ["claude", "codex", "gemini"] as AgentType[]) {
     const agentState = pool.agents[agent];
     let detail: string | undefined;
 
@@ -313,7 +392,7 @@ export async function agentStatusCommand(projectPath: string): Promise<void> {
 
   logger.section("Agent Pool");
 
-  for (const agent of ["claude", "codex", "opencode"] as AgentType[]) {
+  for (const agent of ["claude", "codex", "gemini"] as AgentType[]) {
     const agentState = pool.agents[agent];
 
     console.log("");
@@ -376,7 +455,7 @@ export async function agentDetectCommand(): Promise<void> {
 
   if (available.length === 0) {
     logger.error("No agents found!");
-    logger.info("Please install at least one of: claude, codex, opencode");
+    logger.info("Please install at least one of: claude, codex, gemini");
     process.exit(1);
   }
 
@@ -385,7 +464,7 @@ export async function agentDetectCommand(): Promise<void> {
     console.log(`  ${chalk.green("✓")} ${agent}`);
   }
 
-  const missing = (["claude", "codex", "opencode"] as AgentType[]).filter(
+  const missing = (["claude", "codex", "gemini"] as AgentType[]).filter(
     (a) => !available.includes(a)
   );
 

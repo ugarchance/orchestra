@@ -71,24 +71,95 @@ npm link
 ### Basic Usage
 
 ```bash
-# Run with a goal
+# Interactive model selection
 orchestra run "Build a todo list app with React"
 
-# With options
-orchestra run "Fix the login bug" --max-cycles 10 --max-workers 5
+# Fast mode (quick iterations)
+orchestra run "Fix the login bug" --fast
 
-# Verbose mode
-orchestra run "Add dark mode" --verbose
+# Max mode (complex tasks)
+orchestra run "Refactor authentication system" --max
+
+# Default models (skip selection)
+orchestra run "Add dark mode" -d
 ```
 
-### Options
+### Model Selection
+
+Orchestra supports three model presets and manual selection:
+
+#### Presets
+
+| Flag | Claude | Codex | OpenCode | Use Case |
+|------|--------|-------|----------|----------|
+| `-f, --fast` | Haiku | Low reasoning | Gemini 3 Flash | Quick iterations, testing |
+| `-d, --default` | Sonnet | Medium reasoning | Antigravity Claude Opus | Balanced (default) |
+| `-m, --max` | Opus | XHigh reasoning | Antigravity Claude Opus | Complex tasks |
+
+```bash
+# Fast mode - cheaper & faster
+orchestra run "Fix typo in README" --fast
+
+# Max mode - most capable
+orchestra run "Implement OAuth2 with refresh tokens" --max
+```
+
+#### Manual Model Selection
+
+```bash
+# Specify individual models
+orchestra run "Build API" --claude opus --codex gpt-5.2-codex --reasoning high
+
+# Mix presets with overrides
+orchestra run "Complex task" --fast --claude sonnet  # Fast but use Sonnet for Claude
+```
+
+| Option | Values |
+|--------|--------|
+| `--claude <model>` | `opus`, `sonnet`, `haiku` |
+| `--codex <model>` | `gpt-5.2-codex`, `gpt-5.1-codex-max`, `gpt-5.1-codex` |
+| `--reasoning <level>` | `minimal`, `low`, `medium`, `high`, `xhigh` |
+| `--opencode <model>` | `google/antigravity-*` models |
+
+#### Available Models
+
+**Claude:**
+- `opus` - Opus 4.5 (most capable)
+- `sonnet` - Sonnet 4.5 (balanced)
+- `haiku` - Haiku 4.5 (fastest)
+
+**Codex:**
+- `gpt-5.2-codex` - Latest
+- `gpt-5.1-codex-max` - High performance
+- `gpt-5.1-codex` - Balanced
+
+**Codex Reasoning Levels:**
+- `minimal` - Fastest
+- `low` - Light reasoning
+- `medium` - Balanced (default)
+- `high` - Deep reasoning
+- `xhigh` - Maximum depth
+
+**OpenCode (Antigravity):**
+- `google/antigravity-claude-opus-4-5-thinking`
+- `google/antigravity-claude-sonnet-4-5-thinking`
+- `google/antigravity-gemini-3-pro-high`
+- `google/antigravity-gemini-3-pro-low`
+- `google/antigravity-gemini-3-flash`
+
+### All Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--max-cycles` | 20 | Maximum planning cycles |
-| `--max-workers` | 3 | Parallel worker count |
-| `--timeout` | 600000 | Timeout per task (ms) |
-| `--verbose` | false | Enable debug logging |
+| `-c, --max-cycles <n>` | 20 | Maximum planning cycles |
+| `-w, --max-workers <n>` | 3 | Parallel worker count |
+| `-d, --default-models` | - | Skip model selection, use defaults |
+| `-f, --fast` | - | Fast mode (Haiku, Low, Flash) |
+| `-m, --max` | - | Max mode (Opus, XHigh) |
+| `--claude <model>` | sonnet | Claude model |
+| `--codex <model>` | gpt-5.2-codex | Codex model |
+| `--reasoning <level>` | medium | Codex reasoning level |
+| `--opencode <model>` | antigravity-claude-opus | OpenCode model |
 
 ## How It Works
 
@@ -98,7 +169,7 @@ orchestra run "Add dark mode" --verbose
 - Does NOT write code itself
 
 ### 2. Worker Phase
-- Workers claim tasks from queue
+- Workers claim tasks from queue (index-based, no locks)
 - Execute tasks using available CLI tools (Claude/Codex/OpenCode)
 - Commit changes after completion
 - Run in parallel (up to `maxWorkers`)
@@ -142,11 +213,12 @@ orchestra/                  # Orchestra source code
 │   │   └── errors.ts      # Error handling
 │   ├── utils/
 │   │   ├── cli.ts         # CLI execution utilities
+│   │   ├── prompts.ts     # Model selection UI
 │   │   └── logger.ts      # Logging
 │   ├── types/
 │   │   └── index.ts       # TypeScript types
 │   └── cli/
-│       └── index.ts       # CLI entry point
+│       └── commands.ts    # CLI commands
 └── dist/                  # Compiled output
 ```
 
@@ -154,7 +226,7 @@ orchestra/                  # Orchestra source code
 
 Orchestra automatically:
 1. Detects available CLI tools
-2. Selects the best available agent
+2. Uses selected model configuration
 3. Handles rate limits with cooldowns
 4. Fails over to another agent if one fails
 

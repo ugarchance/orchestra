@@ -38,7 +38,7 @@ function createInitialAgentState(): AgentState {
 export function createInitialAgentPool(): AgentPool {
   const config: AgentPoolConfig = {
     selection_strategy: "round_robin_healthy",
-    fallback_order: ["claude", "codex", "opencode"],
+    fallback_order: ["claude", "codex", "gemini"],
     min_available_agents: 1,
     max_consecutive_failures: 3,
     cooldown_multiplier: 1.5,
@@ -48,7 +48,7 @@ export function createInitialAgentPool(): AgentPool {
     agents: {
       claude: createInitialAgentState(),
       codex: createInitialAgentState(),
-      opencode: createInitialAgentState(),
+      gemini: createInitialAgentState(),
     },
     pool_config: config,
   };

@@ -1,4 +1,4 @@
-import type { AgentType, Task, ErrorInfo } from "../types/index.js";
+import type { AgentType, Task, ErrorInfo, ModelConfig } from "../types/index.js";
 import {
   BaseAgentExecutor,
   type ExecutionContext,
@@ -7,7 +7,7 @@ import {
 } from "./base.js";
 import { ClaudeExecutor, isClaudeRateLimited } from "./claude.js";
 import { CodexExecutor, isCodexRateLimited } from "./codex.js";
-import { OpenCodeExecutor, isOpenCodeRateLimited } from "./opencode.js";
+import { GeminiExecutor, isGeminiRateLimited } from "./gemini.js";
 import {
   selectAgent,
   markAgentBusy,
@@ -30,13 +30,13 @@ export class AgentExecutorManager {
   private projectPath: string;
   private availableAgents: AgentType[] = [];
 
-  constructor(projectPath: string, timeout: number = 300000) {
+  constructor(projectPath: string, timeout: number = 300000, modelConfig?: ModelConfig) {
     this.projectPath = projectPath;
 
-    // Initialize executors for each agent type
-    this.executors.set("claude", new ClaudeExecutor(projectPath, timeout));
-    this.executors.set("codex", new CodexExecutor(projectPath, timeout));
-    this.executors.set("opencode", new OpenCodeExecutor(projectPath, timeout));
+    // Initialize executors for each agent type with model config
+    this.executors.set("claude", new ClaudeExecutor(projectPath, timeout, modelConfig?.claude));
+    this.executors.set("codex", new CodexExecutor(projectPath, timeout, modelConfig?.codex));
+    this.executors.set("gemini", new GeminiExecutor(projectPath, timeout, modelConfig?.gemini));
   }
 
   /**
@@ -44,7 +44,7 @@ export class AgentExecutorManager {
    * Also updates agent pool to disable unavailable agents
    */
   async detectAvailableAgents(): Promise<AgentType[]> {
-    const agents: AgentType[] = ["claude", "codex", "opencode"];
+    const agents: AgentType[] = ["claude", "codex", "gemini"];
     const available: AgentType[] = [];
 
     for (const agent of agents) {
@@ -232,8 +232,8 @@ export class AgentExecutorManager {
         return isClaudeRateLimited(output);
       case "codex":
         return isCodexRateLimited(output);
-      case "opencode":
-        return isOpenCodeRateLimited(output);
+      case "gemini":
+        return isGeminiRateLimited(output);
       default:
         return false;
     }
@@ -247,7 +247,7 @@ export class AgentExecutorManager {
     const cooldowns: Record<AgentType, number> = {
       claude: 45,
       codex: 30,
-      opencode: 30,
+      gemini: 30,
     };
     return cooldowns[agent];
   }
@@ -360,7 +360,8 @@ export class AgentExecutorManager {
  */
 export function createExecutorManager(
   projectPath: string,
-  timeout?: number
+  timeout?: number,
+  modelConfig?: ModelConfig
 ): AgentExecutorManager {
-  return new AgentExecutorManager(projectPath, timeout);
+  return new AgentExecutorManager(projectPath, timeout, modelConfig);
 }

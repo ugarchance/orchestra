@@ -10,7 +10,7 @@ export type {
 // Individual agent implementations
 export { ClaudeExecutor, createClaudeExecutor, isClaudeRateLimited } from "./claude.js";
 export { CodexExecutor, createCodexExecutor, isCodexRateLimited } from "./codex.js";
-export { OpenCodeExecutor, createOpenCodeExecutor, isOpenCodeRateLimited } from "./opencode.js";
+export { GeminiExecutor, createGeminiExecutor, isGeminiRateLimited } from "./gemini.js";
 
 // Executor manager with failover
 export { AgentExecutorManager, createExecutorManager } from "./executor.js";

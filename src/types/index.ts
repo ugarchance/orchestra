@@ -5,7 +5,7 @@
 // AGENT TYPES
 // =============================================================================
 
-export type AgentType = "claude" | "codex" | "opencode";
+export type AgentType = "claude" | "codex" | "gemini";
 
 export type AgentStatus =
   | "available"      // Ready to use
@@ -245,6 +245,40 @@ export type SelectionResult =
   | { type: "pause"; reason: string };
 
 // =============================================================================
+// MODEL TYPES
+// =============================================================================
+
+// Claude models
+export type ClaudeModel = "opus" | "sonnet" | "haiku";
+
+// Codex models
+export type CodexModel = "gpt-5.2-codex" | "gpt-5.1-codex-max" | "gpt-5.1-codex";
+
+// Codex reasoning levels
+export type CodexReasoningLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
+
+// Gemini models (Gemini 3 requires -preview suffix)
+export type GeminiModel =
+  | "gemini-3-pro-preview"
+  | "gemini-3-flash-preview"
+  | "gemini-2.5-pro"
+  | "gemini-2.5-flash";
+
+// Model configuration for each agent
+export interface ModelConfig {
+  claude?: {
+    model: ClaudeModel;
+  };
+  codex?: {
+    model: CodexModel;
+    reasoningLevel: CodexReasoningLevel;
+  };
+  gemini?: {
+    model: GeminiModel;
+  };
+}
+
+// =============================================================================
 // CLI TYPES
 // =============================================================================
 
@@ -253,6 +287,7 @@ export interface StartOptions {
   projectPath: string;
   maxCycles?: number;
   maxWorkers?: number;
+  modelConfig?: ModelConfig;
 }
 
 export interface StatusInfo {

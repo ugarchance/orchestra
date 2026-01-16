@@ -1,4 +1,4 @@
-import type { AgentType, Task } from "../types/index.js";
+import type { AgentType, Task, ClaudeModel } from "../types/index.js";
 import {
   BaseAgentExecutor,
   type AgentExecutorConfig,
@@ -10,29 +10,43 @@ import { runClaude } from "../utils/cli.js";
 import logger from "../utils/logger.js";
 
 /**
+ * Claude model config
+ */
+export interface ClaudeModelConfig {
+  model: ClaudeModel;
+}
+
+/**
  * Claude CLI executor
  *
  * Uses stdin approach to avoid shell escaping issues:
- * echo "prompt" | claude -p - --dangerously-skip-permissions --output-format json
+ * echo "prompt" | claude -p - --dangerously-skip-permissions --output-format json --model <model>
  */
 export class ClaudeExecutor extends BaseAgentExecutor {
   readonly agentType: AgentType = "claude";
   private timeout: number;
   private workingDir: string;
+  private model: ClaudeModel;
 
-  constructor(workingDir: string, timeout: number = 300000) {
+  constructor(workingDir: string, timeout: number = 300000, modelConfig?: ClaudeModelConfig) {
     const claudePath = process.env.CLAUDE_PATH ||
       `${process.env.HOME}/.claude/local/claude`;
 
+    // Default to sonnet if no model specified
+    const model = modelConfig?.model ?? "sonnet";
+
     const config: AgentExecutorConfig = {
       command: claudePath,
-      flags: ["-p", "-", "--dangerously-skip-permissions", "--output-format", "json"],
+      flags: ["-p", "-", "--dangerously-skip-permissions", "--output-format", "json", "--model", model],
       timeout,
       workingDir,
     };
     super(config);
     this.timeout = timeout;
     this.workingDir = workingDir;
+    this.model = model;
+
+    logger.info(`[Claude] Using model: ${this.model}`);
   }
 
   /**
@@ -111,13 +125,14 @@ export class ClaudeExecutor extends BaseAgentExecutor {
     // args[0] is the prompt (from buildArgs)
     const prompt = args[0];
 
-    logger.info(`[Claude] Executing via stdin approach...`);
+    logger.info(`[Claude] Executing via stdin approach with model: ${this.model}`);
     logger.debug(`[Claude] Working dir: ${this.workingDir}`);
     logger.debug(`[Claude] Prompt preview: ${prompt.slice(0, 200)}...`);
 
     const result = await runClaude(prompt, {
       cwd: this.workingDir,
       timeout: this.timeout,
+      model: this.model,
     });
 
     logger.debug(`[Claude] Exit code: ${result.exitCode}`);
